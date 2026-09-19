@@ -72,8 +72,16 @@ if [[ -n "${COPYBARA_ORIGIN_FOLDER:-}" ]]; then
     echo 'Origin folder must be an existing non-symlink directory.' >&2
     exit 2
   }
+  [[ "${COPYBARA_DESTINATION_PR_BRANCH:-}" =~ ^[A-Za-z0-9._/-]+$ ]] || {
+    echo 'Folder origins require a safe destination PR branch.' >&2
+    exit 2
+  }
   origin_ref="$COPYBARA_ORIGIN_FOLDER"
-  extra_args+=(--folder-origin-version "$COPYBARA_SOURCE_REF")
+  extra_args+=(
+    --folder-origin-version "$COPYBARA_SOURCE_REF"
+    --git-destination-path "$COPYBARA_ORIGIN_FOLDER"
+    --github-destination-pr-branch "$COPYBARA_DESTINATION_PR_BRANCH"
+  )
 fi
 if [[ -n "${COPYBARA_DESTINATION_FETCH:-}" ]]; then
   [[ "$COPYBARA_DESTINATION_FETCH" =~ ^[A-Za-z0-9._/-]+$ ]] || {

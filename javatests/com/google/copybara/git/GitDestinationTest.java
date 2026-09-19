@@ -81,6 +81,7 @@ import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import javax.annotation.Nullable;
 import net.starlark.java.eval.StarlarkList;
 import org.junit.Assume;
@@ -2123,6 +2124,37 @@ public class GitDestinationTest {
     assertThatCheckout(repo(), primaryBranch)
         .containsFile("test.txt", "another content")
         .containsNoMoreFiles();
+  }
+
+  @Test
+  public void testLocalRepoReusesExistingDescendantBranch() throws Exception {
+    fetch = primaryBranch;
+    push = primaryBranch;
+    Files.write(workdir.resolve("test.txt"), "first\n".getBytes(UTF_8));
+    process(firstCommitWriter(), new DummyRevision("origin_ref1"));
+
+    Path localPath = Files.createTempDirectory("local_repo_existing_branch");
+    GitRepository localRepo =
+        GitRepository.newRepo(/* verbose= */ true, localPath, getEnv()).init(repoFormat);
+    GitRevision fetched =
+        localRepo.fetchSingleRef(
+            url,
+            "refs/heads/" + primaryBranch,
+            /* partialFetch= */ false,
+            Optional.empty());
+    localRepo.branch(primaryBranch).withStartPoint(fetched.getHash()).run();
+    localRepo.simpleCommand("checkout", primaryBranch);
+    Files.write(localPath.resolve("prepared.txt"), "prepared\n".getBytes(UTF_8));
+    localRepo.add().files("prepared.txt").run();
+    localRepo.simpleCommand("commit", "-m", "prepared destination base");
+    String preparedBase = localRepo.resolveReference("HEAD").getHash();
+
+    options.gitDestination.localRepoPath = localPath.toString();
+    Files.write(workdir.resolve("test.txt"), "second\n".getBytes(UTF_8));
+    process(newWriter(), new DummyRevision("origin_ref2"));
+
+    String published = repo().resolveReference(primaryBranch).getHash();
+    assertThat(repo().isAncestor(preparedBase, published)).isTrue();
   }
 
   @Test

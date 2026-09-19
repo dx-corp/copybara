@@ -112,6 +112,7 @@ class RunGithubAppMigrationTest(unittest.TestCase):
         origin.mkdir()
         env = self.environment()
         env["COPYBARA_ORIGIN_FOLDER"] = str(origin)
+        env["COPYBARA_DESTINATION_PR_BRANCH"] = "sync/mono-projection"
         env["COPYBARA_DESTINATION_FETCH"] = "sync/mono-projection"
 
         result = subprocess.run(
@@ -126,11 +127,34 @@ class RunGithubAppMigrationTest(unittest.TestCase):
         args = self.capture.read_text(encoding="utf-8").splitlines()
         self.assertIn("--folder-origin-version", args)
         self.assertIn("a" * 40, args)
+        self.assertIn("--git-destination-path", args)
+        self.assertEqual(args.count(str(origin)), 2)
+        self.assertIn("--github-destination-pr-branch", args)
         self.assertIn("--git-destination-fetch", args)
-        self.assertIn("sync/mono-projection", args)
+        self.assertEqual(args.count("sync/mono-projection"), 2)
         self.assertIn("--github-pr-destination-fast-forward=true", args)
         self.assertEqual(args[-1], str(origin))
         self.assertNotIn("ghs_fixture", args)
+
+    def test_rejects_folder_without_destination_pr_branch(self) -> None:
+        origin = self.root / "prepared"
+        origin.mkdir()
+        env = self.environment()
+        env["COPYBARA_ORIGIN_FOLDER"] = str(origin)
+
+        result = subprocess.run(
+            ["bash", str(SCRIPT)],
+            env=env,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(
+            "Folder origins require a safe destination PR branch", result.stderr
+        )
+        self.assertFalse(self.capture.exists())
 
 
 if __name__ == "__main__":

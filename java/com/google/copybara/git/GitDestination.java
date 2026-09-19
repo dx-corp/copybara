@@ -342,13 +342,15 @@ public class GitDestination implements Destination<GitRevision> {
       if (!state.alreadyFetched) {
         GitRevision revision = fetchFromRemote(console, repo, repoUrl, remoteFetch);
         if (revision != null) {
-          try {
+          if (localRepoPath != null && repo.refExists(getCompleteRef(state.localBranch))) {
+            GitRevision localRevision = repo.resolveReference(state.localBranch);
+            checkCondition(
+                repo.isAncestor(revision.getHash(), localRevision.getHash()),
+                "Existing local destination branch '%s' must descend from fetched ref '%s'",
+                state.localBranch,
+                remoteFetch);
+          } else {
             repo.branch(state.localBranch).withStartPoint(revision.getHash()).run();
-          } catch (RepoException e) {
-            if (e.getMessage().contains(String.format("%s already exists", state.localBranch))) {
-              return;
-            }
-            throw e;
           }
         }
         state.alreadyFetched = true;
@@ -1020,4 +1022,3 @@ public class GitDestination implements Destination<GitRevision> {
   }
 
 }
-
