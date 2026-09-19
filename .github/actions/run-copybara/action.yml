@@ -20,6 +20,10 @@ inputs:
     description: Optional absolute prepared-tree path for a folder.origin workflow.
     required: false
     default: ""
+  destination-pr-branch:
+    description: Required PR branch context when origin-folder is set.
+    required: false
+    default: ""
   destination-fetch:
     description: Optional destination base or PR branch to update with fast-forward-only transport.
     required: false
@@ -44,6 +48,7 @@ runs:
         COPYBARA_WORKFLOW: ${{ inputs.workflow }}
         COPYBARA_SOURCE_REF: ${{ inputs.source-ref }}
         COPYBARA_ORIGIN_FOLDER: ${{ inputs.origin-folder }}
+        COPYBARA_DESTINATION_PR_BRANCH: ${{ inputs.destination-pr-branch }}
         COPYBARA_DESTINATION_FETCH: ${{ inputs.destination-fetch }}
         COPYBARA_GITHUB_TOKEN: ${{ inputs.github-token }}
       run: bash "$GITHUB_ACTION_PATH/../../scripts/run-github-app-migration.sh"
