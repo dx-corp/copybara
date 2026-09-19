@@ -1,0 +1,149 @@
+name: Promote tested runtime
+run-name: Promote Copybara runtime ${{ inputs.source_sha }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Exact merged master commit from a successful Fork source build run
+        required: true
+        type: string
+      source_build_run_id:
+        description: Successful push-triggered Fork source build run ID for source_sha
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  promote:
+    if: github.repository == 'dx-corp/copybara' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out trusted fork master
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: master
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify the selected source build
+        id: source
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          SOURCE_BUILD_RUN_ID: ${{ inputs.source_build_run_id }}
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$SOURCE_BUILD_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          git cat-file -e "${SOURCE_SHA}^{commit}"
+          git merge-base --is-ancestor "$SOURCE_SHA" refs/remotes/origin/master
+
+          run_json="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${SOURCE_BUILD_RUN_ID}")"
+          test "$(jq -r '.name' <<< "$run_json")" = 'Fork source build'
+          test "$(jq -r '.path' <<< "$run_json")" = '.github/workflows/source-build.yml'
+          test "$(jq -r '.event' <<< "$run_json")" = push
+          test "$(jq -r '.head_branch' <<< "$run_json")" = master
+          test "$(jq -r '.head_sha' <<< "$run_json")" = "$SOURCE_SHA"
+          test "$(jq -r '.status' <<< "$run_json")" = completed
+          test "$(jq -r '.conclusion' <<< "$run_json")" = success
+          run_attempt="$(jq -r '.run_attempt' <<< "$run_json")"
+          [[ "$run_attempt" =~ ^[1-9][0-9]*$ ]]
+
+          artifact="copybara-deploy-${SOURCE_SHA}"
+          gh run download "$SOURCE_BUILD_RUN_ID" --name "$artifact" --dir runtime-artifact
+          result="$(python3 .github/scripts/verify-runtime-artifact.py runtime-artifact \
+            --source-sha "$SOURCE_SHA" --run-id "$SOURCE_BUILD_RUN_ID" \
+            --run-attempt "$run_attempt")"
+          tag="runtime-${SOURCE_SHA:0:12}"
+          {
+            echo "tag=$tag"
+            echo "jar_sha256=$(jq -r '.jar_sha256' <<< "$result")"
+            echo "upstream_base_sha=$(jq -r '.upstream_base_sha' <<< "$result")"
+            echo "run_attempt=$run_attempt"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Create or verify the immutable release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          SOURCE_BUILD_RUN_ID: ${{ inputs.source_build_run_id }}
+          RUN_ATTEMPT: ${{ steps.source.outputs.run_attempt }}
+          TAG: ${{ steps.source.outputs.tag }}
+          JAR_SHA256: ${{ steps.source.outputs.jar_sha256 }}
+          UPSTREAM_BASE_SHA: ${{ steps.source.outputs.upstream_base_sha }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            release_json="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" \
+              --json assets,isDraft,isPrerelease,tagName)"
+            test "$(jq -r '.tagName' <<< "$release_json")" = "$TAG"
+            test "$(jq -r '.isDraft' <<< "$release_json")" = false
+            test "$(jq -r '.isPrerelease' <<< "$release_json")" = false
+            test "$(jq -c '[.assets[].name] | sort' <<< "$release_json")" = \
+              '["copybara_deploy.jar","copybara_deploy.jar.sha256","provenance.json"]'
+            remote_tags="$(git ls-remote --exit-code --tags origin \
+              "refs/tags/$TAG" "refs/tags/$TAG^{}")"
+            tag_commit="$(awk '$2 ~ /\^\{\}$/ {print $1}' <<< "$remote_tags")"
+            if [[ -z "$tag_commit" ]]; then
+              tag_commit="$(awk 'NR == 1 {print $1}' <<< "$remote_tags")"
+            fi
+            test "$tag_commit" = "$SOURCE_SHA"
+            mkdir existing-release
+            gh release download "$TAG" --repo "$GITHUB_REPOSITORY" \
+              --dir existing-release \
+              --pattern copybara_deploy.jar \
+              --pattern copybara_deploy.jar.sha256 \
+              --pattern provenance.json
+            python3 .github/scripts/verify-runtime-artifact.py existing-release \
+              --source-sha "$SOURCE_SHA" --run-id "$SOURCE_BUILD_RUN_ID" \
+              --run-attempt "$RUN_ATTEMPT"
+            cmp runtime-artifact/copybara_deploy.jar existing-release/copybara_deploy.jar
+            cmp runtime-artifact/copybara_deploy.jar.sha256 existing-release/copybara_deploy.jar.sha256
+            cmp runtime-artifact/provenance.json existing-release/provenance.json
+            exit 0
+          fi
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
+            echo "Tag exists without a matching release: $TAG" >&2
+            exit 1
+          fi
+
+          notes="$(mktemp)"
+          trap 'rm -f "$notes"' EXIT
+          cat > "$notes" <<EOF
+          Tested dx-corp Copybara runtime.
+
+          - Fork source: \`$SOURCE_SHA\`
+          - Upstream base: \`$UPSTREAM_BASE_SHA\`
+          - Source build: https://github.com/$GITHUB_REPOSITORY/actions/runs/$SOURCE_BUILD_RUN_ID
+          - JAR SHA-256: \`$JAR_SHA256\`
+
+          This release promotes the exact bytes from the successful source-build artifact; it does not rebuild them.
+          EOF
+          gh release create "$TAG" \
+            runtime-artifact/copybara_deploy.jar \
+            runtime-artifact/copybara_deploy.jar.sha256 \
+            runtime-artifact/provenance.json \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$SOURCE_SHA" \
+            --title "Copybara runtime ${SOURCE_SHA:0:12}" \
+            --notes-file "$notes" \
+            --latest=false
+
+      - name: Record promotion receipt
+        shell: bash
+        env:
+          TAG: ${{ steps.source.outputs.tag }}
+          JAR_SHA256: ${{ steps.source.outputs.jar_sha256 }}
+        run: |
+          {
+            echo '### Promoted runtime'
+            echo
+            echo "- Tag: \`$TAG\`"
+            echo "- JAR SHA-256: \`$JAR_SHA256\`"
+          } >> "$GITHUB_STEP_SUMMARY"

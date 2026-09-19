@@ -1,0 +1,39 @@
+name: Run pinned Copybara migration
+description: Run a checksum-pinned dx-corp Copybara release with a short-lived GitHub App token.
+inputs:
+  runtime-tag:
+    description: Immutable dx-corp/copybara runtime release tag.
+    required: true
+  runtime-sha256:
+    description: Expected SHA-256 of copybara_deploy.jar.
+    required: true
+  config:
+    description: Path to the caller-owned copy.bara.sky file.
+    required: true
+  workflow:
+    description: Workflow name inside copy.bara.sky.
+    required: true
+  source-ref:
+    description: Immutable 40-character source commit SHA.
+    required: true
+  github-token:
+    description: Short-lived GitHub App installation token scoped to source and destination repositories.
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Set up the pinned runtime Java
+      uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+      with:
+        distribution: temurin
+        java-version: 25.0.4+7
+    - name: Run Copybara
+      shell: bash
+      env:
+        COPYBARA_RUNTIME_TAG: ${{ inputs.runtime-tag }}
+        COPYBARA_RUNTIME_SHA256: ${{ inputs.runtime-sha256 }}
+        COPYBARA_CONFIG: ${{ inputs.config }}
+        COPYBARA_WORKFLOW: ${{ inputs.workflow }}
+        COPYBARA_SOURCE_REF: ${{ inputs.source-ref }}
+        COPYBARA_GITHUB_TOKEN: ${{ inputs.github-token }}
+      run: bash "$GITHUB_ACTION_PATH/../../scripts/run-github-app-migration.sh"
