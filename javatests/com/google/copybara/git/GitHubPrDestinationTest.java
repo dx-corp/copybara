@@ -367,6 +367,103 @@ public class GitHubPrDestinationTest {
   }
 
   @Test
+  public void testFastForwardPrBranchRequiresExplicitFetch() throws ValidationException {
+    options.githubDestination.destinationPrBranch = "feature";
+    options.githubDestination.fastForwardPrBranchUpdates = true;
+    GitHubPrDestination destination =
+        skylark.eval(
+            "r",
+            "r = git.github_pr_destination("
+                + "    url = 'https://github.com/foo',"
+                + "    destination_ref = 'main',"
+                + ")");
+
+    ValidationException thrown =
+        assertThrows(
+            ValidationException.class,
+            () ->
+                destination.newWriter(
+                    new WriterContext(
+                        "piper_to_github_pr",
+                        "TEST",
+                        false,
+                        new DummyRevision("feature", "feature"),
+                        Glob.ALL_FILES.roots())));
+
+    assertThat(thrown)
+        .hasMessageThat()
+        .contains("requires --git-destination-fetch");
+  }
+
+  @Test
+  public void testFastForwardPrBranchPreservesExistingHistory()
+      throws ValidationException, IOException, RepoException {
+    options.githubDestination.destinationPrBranch = "feature";
+    options.githubDestination.fastForwardPrBranchUpdates = true;
+    options.gitDestination.fetch = "feature";
+
+    gitUtil.mockApi(
+        "GET",
+        getPullRequestsUrl("feature"),
+        mockResponse(
+            """
+            [{
+              "id": 1,
+              "number": 12345,
+              "state": "open",
+              "title": "projection",
+              "body": "projection",
+              "head": {"ref": "feature"},
+              "base": {"ref": "main"}
+            }]
+            """));
+
+    GitHubPrDestination destination =
+        skylark.eval(
+            "r",
+            "r = git.github_pr_destination("
+                + "    url = 'https://github.com/foo',"
+                + "    destination_ref = 'main',"
+                + ")");
+    GitRepository remote = gitUtil.mockRemoteRepo("github.com/foo");
+    addFiles(
+        remote,
+        null,
+        "main change",
+        ImmutableMap.<String, String>builder().put("base.txt", "base").buildOrThrow());
+    addFiles(
+        remote,
+        "feature",
+        "existing projection",
+        ImmutableMap.<String, String>builder().put("test.txt", "old").buildOrThrow());
+    String previousHead = remote.resolveReference("feature").getHash();
+
+    Writer<GitRevision> writer =
+        destination.newWriter(
+            new WriterContext(
+                "piper_to_github_pr",
+                "TEST",
+                false,
+                new DummyRevision("feature", "feature"),
+                Glob.ALL_FILES.roots()));
+    writeFile(workdir, "test.txt", "new");
+    writer.write(
+        TransformResults.of(workdir, new DummyRevision("two")), Glob.ALL_FILES, console);
+
+    String updatedHead = remote.resolveReference("feature").getHash();
+    assertThat(remote.isAncestor(previousHead, updatedHead)).isTrue();
+    assertThat(Iterables.transform(remote.log("feature").run(), GitLogEntry::body))
+        .containsExactly(
+            "main change\n",
+            "existing projection\n",
+            """
+            test summary
+
+            DummyOrigin-RevId: two
+            """);
+  }
+
+  @Test
   public void testTrimMessageForPrTitle()
       throws ValidationException, IOException, RepoException {
     options.githubDestination.destinationPrBranch = "feature";

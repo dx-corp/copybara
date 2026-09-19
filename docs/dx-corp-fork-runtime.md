@@ -6,7 +6,7 @@ This public fork retains the upstream Apache 2.0 source and builds the Copybara 
 
 For a durable Mono runtime pin, run **Promote tested runtime** from fork `master` with the exact merged source SHA and its successful push-triggered **Fork source build** run ID. The promotion workflow verifies the run identity, downloads its three-file artifact, validates every provenance binding and checksum, and creates `runtime-<source SHA prefix>` without rebuilding the JAR. A retry accepts an existing release only when all three assets are byte-identical. Record the fork source SHA, release tag, release asset SHA-256, and successful build run in Mono's lock. A new upstream commit or toolchain change requires another reviewed fork PR, green build and tests, and a new immutable release asset. Do not follow a floating `latest` release or rebuild an older source SHA with newer tools and assume the bytes match.
 
-`.github/actions/run-copybara` is the caller-side runtime boundary. It installs the required Java version, downloads an explicit runtime tag, verifies the caller-supplied JAR digest, writes a short-lived GitHub App installation token to a mode-0600 temporary TOML file, and removes the file after Copybara exits. The token never appears in the Java command line. The caller must pin this action by commit SHA and mint an installation token limited to the authoritative source repository and one destination repository.
+`.github/actions/run-copybara` is the caller-side runtime boundary. It installs the required Java version, downloads an explicit runtime tag, verifies the caller-supplied JAR digest, writes a short-lived GitHub App installation token to a mode-0600 temporary TOML file, and removes the file after Copybara exits. The token never appears in the Java command line. The caller must pin this action by commit SHA and mint an installation token limited to the authoritative source repository and one destination repository. A caller that already assembles and validates a package can pass its absolute path as `origin-folder`; Copybara binds that folder migration to the immutable `source-ref` in destination metadata.
 
 The Copybara config remains with the authoritative source. It should read the token without embedding it:
 
@@ -17,7 +17,7 @@ GITHUB_APP = credentials.username_password(
 )
 ```
 
-Use `GITHUB_APP` for the GitHub origin and destination credentials. GitHub URLs using config credentials must omit the trailing `.git` (for example, `https://github.com/dx-corp/mono`) so Copybara's path-scoped credential entry matches the Git transport request. Prefer `git.github_pr_destination` with a stable generated branch, preserve destination-owned CI/policy through `destination_files`, require an immutable source SHA, and validate the prepared package before migration. For dx-corp, reuse the installed `evalops-mirror` App: it already has repository contents and pull-request permissions and is installed across the organization. Keep its private key in the authoritative caller repository; the public Copybara fork does not need or receive that key.
+Use `GITHUB_APP` for the GitHub origin and destination credentials. GitHub URLs using config credentials must omit the trailing `.git` (for example, `https://github.com/dx-corp/mono`) so Copybara's path-scoped credential entry matches the Git transport request. Prefer `git.github_pr_destination` with a stable generated branch, preserve destination-owned CI/policy through `destination_files`, require an immutable source SHA, and validate the prepared package before migration. To update an existing generated branch without rewriting it, the caller passes `destination-fetch` as that branch; for a new branch it passes the destination base. The action enables the fork's fail-closed fast-forward mode, which refuses any other fetch ref and emits no force refspec. For dx-corp, reuse the installed `evalops-mirror` App: it already has repository contents and pull-request permissions and is installed across the organization. Keep its private key in the authoritative caller repository; the public Copybara fork does not need or receive that key.
 
 A caller job has this shape after a runtime release exists:
 
@@ -48,6 +48,8 @@ steps:
       config: config/copybara/api/copy.bara.sky
       workflow: api
       source-ref: ${{ github.sha }}
+      origin-folder: ${{ runner.temp }}/verified-api-projection
+      destination-fetch: sync/mono-projection
       github-token: ${{ steps.app.outputs.token }}
 ```
 

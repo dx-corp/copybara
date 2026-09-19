@@ -107,6 +107,31 @@ class RunGithubAppMigrationTest(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertFalse(self.capture.exists())
 
+    def test_passes_prepared_folder_with_fast_forward_destination(self) -> None:
+        origin = self.root / "prepared"
+        origin.mkdir()
+        env = self.environment()
+        env["COPYBARA_ORIGIN_FOLDER"] = str(origin)
+        env["COPYBARA_DESTINATION_FETCH"] = "sync/mono-projection"
+
+        result = subprocess.run(
+            ["bash", str(SCRIPT)],
+            env=env,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        args = self.capture.read_text(encoding="utf-8").splitlines()
+        self.assertIn("--folder-origin-version", args)
+        self.assertIn("a" * 40, args)
+        self.assertIn("--git-destination-fetch", args)
+        self.assertIn("sync/mono-projection", args)
+        self.assertIn("--github-pr-destination-fast-forward=true", args)
+        self.assertEqual(args[-1], str(origin))
+        self.assertNotIn("ghs_fixture", args)
+
 
 if __name__ == "__main__":
     unittest.main()
