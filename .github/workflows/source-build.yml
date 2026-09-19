@@ -1,0 +1,113 @@
+name: Fork source build
+run-name: Fork source build ${{ inputs.source_sha || github.sha }}
+
+on:
+  pull_request:
+    branches: [master]
+  push:
+    branches: [master]
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Exact source commit to build from a proposed upstream branch
+        required: true
+        type: string
+      branch:
+        description: Proposed upstream branch whose head must equal source_sha
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build-test-artifact:
+    if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/master'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out exact source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.source_sha || github.sha }}
+          persist-credentials: false
+
+      - name: Verify fork source lineage
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ inputs.source_sha }}
+          EXPECTED_BRANCH: ${{ inputs.branch }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
+            [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
+            [[ "$EXPECTED_BRANCH" =~ ^sync/upstream-[0-9a-f]{12}$ ]]
+            test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+            remote_sha="$(git ls-remote --exit-code origin "refs/heads/$EXPECTED_BRANCH" | awk '{print $1}')"
+            test "$remote_sha" = "$EXPECTED_SHA"
+          fi
+          upstream_sha="$(cat .github/upstream-base.sha)"
+          [[ "$upstream_sha" =~ ^[0-9a-f]{40}$ ]]
+          git cat-file -e "${upstream_sha}^{commit}"
+          git merge-base --is-ancestor "$upstream_sha" HEAD
+          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
+            test "$EXPECTED_BRANCH" = "sync/upstream-${upstream_sha:0:12}"
+          fi
+
+      - name: Install checked toolchains
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = x86_64
+          curl --fail --location --retry 3 \
+            'https://github.com/bazelbuild/bazel/releases/download/9.2.0/bazel-9.2.0-linux-x86_64' \
+            --output "$RUNNER_TEMP/bazel"
+          printf '%s  %s\n' \
+            '7668a95db1250f12c40407251e4e203b4ec8bf39bc495d2f485b2d8c99048694' \
+            "$RUNNER_TEMP/bazel" | sha256sum --check --status
+          chmod 755 "$RUNNER_TEMP/bazel"
+          printf '%s\n' "$RUNNER_TEMP" >> "$GITHUB_PATH"
+
+          curl --fail --location --retry 3 \
+            'https://github.com/adoptium/temurin25-binaries/releases/download/jdk-25.0.4%2B7/OpenJDK25U-jdk_x64_linux_hotspot_25.0.4_7.tar.gz' \
+            --output "$RUNNER_TEMP/jdk.tar.gz"
+          printf '%s  %s\n' \
+            'e58fcdcd637b25c03ca84cbbcefc70d11efb8f4b4cbd05decc9f661769d77f94' \
+            "$RUNNER_TEMP/jdk.tar.gz" | sha256sum --check --status
+          mkdir "$RUNNER_TEMP/jdk"
+          tar -xzf "$RUNNER_TEMP/jdk.tar.gz" -C "$RUNNER_TEMP/jdk" --strip-components=1
+          printf 'JAVA_HOME=%s\n' "$RUNNER_TEMP/jdk" >> "$GITHUB_ENV"
+          printf '%s\n' "$RUNNER_TEMP/jdk/bin" >> "$GITHUB_PATH"
+
+      - name: Build deploy JAR and test migration paths
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash .github/scripts/test-refresh-upstream.sh
+          bazel version
+          java -version
+          bazel build --jobs=4 //java/com/google/copybara:copybara_deploy.jar
+          bazel test --jobs=4 --test_output=errors \
+            //javatests/com/google/copybara:WorkflowTest_workflow_test \
+            //javatests/com/google/copybara/git:GitDestinationTest_destination_test \
+            //javatests/com/google/copybara/git:GitOriginTest_origin_test
+          java -jar bazel-bin/java/com/google/copybara/copybara_deploy.jar version
+          java -jar bazel-bin/java/com/google/copybara/copybara_deploy.jar help > /dev/null
+
+      - name: Record exact source and artifact digest
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p runtime-artifact
+          cp bazel-bin/java/com/google/copybara/copybara_deploy.jar runtime-artifact/copybara_deploy.jar
+          (cd runtime-artifact && sha256sum copybara_deploy.jar > copybara_deploy.jar.sha256)
+          python3 .github/scripts/write-provenance.py runtime-artifact
+          (cd runtime-artifact && sha256sum --check copybara_deploy.jar.sha256)
+
+      - name: Upload verified source artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: copybara-deploy-${{ inputs.source_sha || github.sha }}
+          path: runtime-artifact/
+          if-no-files-found: error
+          retention-days: 90

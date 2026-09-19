@@ -11,6 +11,7 @@ permissions:
 
 jobs:
   setup-and-push:
+    if: github.repository == 'google/copybara'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
