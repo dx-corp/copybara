@@ -44,8 +44,11 @@ jobs:
           git merge-base --is-ancestor "$SOURCE_SHA" refs/remotes/origin/master
 
           run_json="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${SOURCE_BUILD_RUN_ID}")"
-          test "$(jq -r '.name' <<< "$run_json")" = 'Fork source build'
-          test "$(jq -r '.path' <<< "$run_json")" = '.github/workflows/source-build.yml'
+          workflow_id="$(jq -r '.workflow_id' <<< "$run_json")"
+          [[ "$workflow_id" =~ ^[1-9][0-9]*$ ]]
+          workflow_json="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/${workflow_id}")"
+          test "$(jq -r '.name' <<< "$workflow_json")" = 'Fork source build'
+          test "$(jq -r '.path' <<< "$workflow_json")" = '.github/workflows/source-build.yml'
           test "$(jq -r '.event' <<< "$run_json")" = push
           test "$(jq -r '.head_branch' <<< "$run_json")" = master
           test "$(jq -r '.head_sha' <<< "$run_json")" = "$SOURCE_SHA"
