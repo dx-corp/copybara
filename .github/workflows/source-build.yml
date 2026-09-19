@@ -88,6 +88,7 @@ jobs:
           java -version
           bazel build --jobs=4 //java/com/google/copybara:copybara_deploy.jar
           bazel test --jobs=4 --test_output=errors \
+            //javatests/com/google/copybara/credentials:CredentialOptionsTest_all_tests \
             //javatests/com/google/copybara:WorkflowTest_workflow_test \
             //javatests/com/google/copybara/git:GitDestinationTest_destination_test \
             //javatests/com/google/copybara/git:GitOriginTest_origin_test

@@ -15,6 +15,7 @@
  */
 package com.google.copybara.credentials;
 
+import com.beust.jcommander.Parameter;
 import com.google.copybara.Option;
 import java.nio.file.Path;
 import javax.annotation.Nullable;
@@ -24,12 +25,8 @@ import javax.annotation.Nullable;
  */
 public class CredentialOptions implements Option {
 
-  /*
-  TODO(b/270712326) enable this flag
   @Parameter(
       names = "--credential-file",
-      description = "location of toml file for reading credentials"
-  )
-   */
+      description = "Location of a TOML file for reading credentials")
   @Nullable public Path credentialFile = null;
 }
