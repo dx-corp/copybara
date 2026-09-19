@@ -32,7 +32,7 @@ done
   echo 'Source ref must be an immutable 40-character Git SHA.' >&2
   exit 2
 }
-[[ "$COPYBARA_GITHUB_TOKEN" =~ ^[A-Za-z0-9_]+$ ]] || {
+[[ "$COPYBARA_GITHUB_TOKEN" =~ ^ghs_[A-Za-z0-9_.-]+$ ]] || {
   echo 'GitHub App token contains unsafe characters.' >&2
   exit 2
 }

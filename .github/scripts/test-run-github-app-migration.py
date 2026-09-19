@@ -46,7 +46,7 @@ class RunGithubAppMigrationTest(unittest.TestCase):
             "done\n"
             "mode=$(python3 -c 'import os, stat, sys; print(oct(stat.S_IMODE(os.stat(sys.argv[1]).st_mode))[2:])' \"$credential\")\n"
             'test "$mode" = 600\n'
-            'grep -q \'token = "ghs_fixture"\' "$credential"\n',
+            'grep -Fqx "token = \\"$FAKE_EXPECTED_TOKEN\\"" "$credential"\n',
             encoding="utf-8",
         )
         curl.chmod(0o755)
@@ -63,6 +63,7 @@ class RunGithubAppMigrationTest(unittest.TestCase):
                 "RUNNER_TEMP": str(self.root),
                 "FAKE_JAR": str(self.jar),
                 "FAKE_CAPTURE": str(self.capture),
+                "FAKE_EXPECTED_TOKEN": "ghs_fixture",
                 "COPYBARA_RUNTIME_TAG": "runtime-123456789abc",
                 "COPYBARA_RUNTIME_SHA256": hashlib.sha256(
                     self.jar.read_bytes()
@@ -93,6 +94,40 @@ class RunGithubAppMigrationTest(unittest.TestCase):
         )
         self.assertIn("::add-mask::ghs_fixture", result.stdout)
         self.assertFalse(any(self.root.glob("copybara-runtime.*")))
+
+    def test_accepts_stateless_installation_token_format(self) -> None:
+        env = self.environment()
+        token = "ghs_12345_eyJhbGciOiJIUzI1NiJ9.payload-with_dash.signature"
+        env["COPYBARA_GITHUB_TOKEN"] = token
+        env["FAKE_EXPECTED_TOKEN"] = token
+
+        result = subprocess.run(
+            ["bash", str(SCRIPT)],
+            env=env,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(f"::add-mask::{token}", result.stdout)
+        self.assertNotIn(token, self.capture.read_text(encoding="utf-8"))
+
+    def test_rejects_token_characters_unsafe_for_toml(self) -> None:
+        env = self.environment()
+        env["COPYBARA_GITHUB_TOKEN"] = 'ghs_bad"token'
+
+        result = subprocess.run(
+            ["bash", str(SCRIPT)],
+            env=env,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("token contains unsafe characters", result.stderr)
+        self.assertFalse(self.capture.exists())
 
     def test_rejects_digest_mismatch_before_java(self) -> None:
         env = self.environment()
