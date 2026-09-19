@@ -86,8 +86,8 @@ jobs:
           bash .github/scripts/test-refresh-upstream.sh
           bazel version
           java -version
-          bazel build --jobs=4 --lockfile_mode=error //java/com/google/copybara:copybara_deploy.jar
-          bazel test --jobs=4 --lockfile_mode=error --test_output=errors \
+          bazel build --jobs=4 //java/com/google/copybara:copybara_deploy.jar
+          bazel test --jobs=4 --test_output=errors \
             //javatests/com/google/copybara:WorkflowTest_workflow_test \
             //javatests/com/google/copybara/git:GitDestinationTest_destination_test \
             //javatests/com/google/copybara/git:GitOriginTest_origin_test
