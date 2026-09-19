@@ -16,6 +16,14 @@ inputs:
   source-ref:
     description: Immutable 40-character source commit SHA.
     required: true
+  origin-folder:
+    description: Optional absolute prepared-tree path for a folder.origin workflow.
+    required: false
+    default: ""
+  destination-fetch:
+    description: Optional destination base or PR branch to update with fast-forward-only transport.
+    required: false
+    default: ""
   github-token:
     description: Short-lived GitHub App installation token scoped to source and destination repositories.
     required: true
@@ -35,5 +43,7 @@ runs:
         COPYBARA_CONFIG: ${{ inputs.config }}
         COPYBARA_WORKFLOW: ${{ inputs.workflow }}
         COPYBARA_SOURCE_REF: ${{ inputs.source-ref }}
+        COPYBARA_ORIGIN_FOLDER: ${{ inputs.origin-folder }}
+        COPYBARA_DESTINATION_FETCH: ${{ inputs.destination-fetch }}
         COPYBARA_GITHUB_TOKEN: ${{ inputs.github-token }}
       run: bash "$GITHUB_ACTION_PATH/../../scripts/run-github-app-migration.sh"

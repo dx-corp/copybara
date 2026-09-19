@@ -91,6 +91,7 @@ jobs:
             //javatests/com/google/copybara/credentials:CredentialOptionsTest_all_tests \
             //javatests/com/google/copybara:WorkflowTest_workflow_test \
             //javatests/com/google/copybara/git:GitDestinationTest_destination_test \
+            //javatests/com/google/copybara/git:GitHubPrDestinationTest_all_tests \
             //javatests/com/google/copybara/git:GitOriginTest_origin_test
           java -jar bazel-bin/java/com/google/copybara/copybara_deploy.jar version
           java -jar bazel-bin/java/com/google/copybara/copybara_deploy.jar help > /dev/null

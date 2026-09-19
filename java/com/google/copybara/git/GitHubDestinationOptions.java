@@ -40,4 +40,12 @@ public final class GitHubDestinationOptions implements Option {
       description = "If the pull request should be created", arity = 1)
   public boolean createPullRequest = true;
 
+  @Parameter(
+      names = "--github-pr-destination-fast-forward",
+      description =
+          "Update the configured pull-request branch only by fast-forwarding it. Requires"
+              + " --git-destination-fetch to name either the destination base or PR branch.",
+      arity = 1)
+  public boolean fastForwardPrBranchUpdates = false;
+
 }

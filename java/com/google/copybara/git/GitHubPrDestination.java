@@ -189,10 +189,28 @@ public class GitHubPrDestination implements Destination<GitRevision> {
                 + UUID.randomUUID()
                 + (writerContext.isDryRun() ? "-dryrun" : ""));
 
+    String destinationRef = getDestinationRef();
+    String remoteFetch = destinationRef;
+    boolean nonFastForwardPush = true;
+    if (gitHubDestinationOptions.fastForwardPrBranchUpdates) {
+      checkCondition(
+          !Strings.isNullOrEmpty(destinationOptions.fetch),
+          "--github-pr-destination-fast-forward requires --git-destination-fetch");
+      checkCondition(
+          destinationOptions.fetch.equals(destinationRef)
+              || destinationOptions.fetch.equals(prBranch),
+          "Fast-forward PR destination fetch must be either '%s' or '%s', but was '%s'",
+          destinationRef,
+          prBranch,
+          destinationOptions.fetch);
+      remoteFetch = destinationOptions.fetch;
+      nonFastForwardPush = false;
+    }
+
     return new WriterImpl<GitHubWriterState>(
         writerContext.isDryRun(),
         url,
-        getDestinationRef(),
+        remoteFetch,
         prBranch,
         partialFetch,
         /*tagName*/ null,
@@ -201,7 +219,7 @@ public class GitHubPrDestination implements Destination<GitRevision> {
         gitOptions,
         gitHubPrWriteHook,
         state,
-        /* nonFastForwardPush= */ true,
+        nonFastForwardPush,
         integrates,
         destinationOptions.lastRevFirstParent,
         destinationOptions.ignoreIntegrationErrors,

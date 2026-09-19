@@ -61,9 +61,35 @@ printf '[github]\ntoken = "%s"\n' "$COPYBARA_GITHUB_TOKEN" > "$credential_file"
 credential_mode="$(python3 -c 'import os, stat, sys; print(oct(stat.S_IMODE(os.stat(sys.argv[1]).st_mode))[2:])' "$credential_file")"
 test "$credential_mode" = 600
 
+origin_ref="$COPYBARA_SOURCE_REF"
+extra_args=()
+if [[ -n "${COPYBARA_ORIGIN_FOLDER:-}" ]]; then
+  [[ "$COPYBARA_ORIGIN_FOLDER" = /* ]] || {
+    echo 'Origin folder must be an absolute path.' >&2
+    exit 2
+  }
+  [[ -d "$COPYBARA_ORIGIN_FOLDER" && ! -L "$COPYBARA_ORIGIN_FOLDER" ]] || {
+    echo 'Origin folder must be an existing non-symlink directory.' >&2
+    exit 2
+  }
+  origin_ref="$COPYBARA_ORIGIN_FOLDER"
+  extra_args+=(--folder-origin-version "$COPYBARA_SOURCE_REF")
+fi
+if [[ -n "${COPYBARA_DESTINATION_FETCH:-}" ]]; then
+  [[ "$COPYBARA_DESTINATION_FETCH" =~ ^[A-Za-z0-9._/-]+$ ]] || {
+    echo 'Destination fetch ref contains unsafe characters.' >&2
+    exit 2
+  }
+  extra_args+=(
+    --git-destination-fetch "$COPYBARA_DESTINATION_FETCH"
+    --github-pr-destination-fast-forward=true
+  )
+fi
+
 GIT_TERMINAL_PROMPT=0 java -jar "$jar" migrate \
   --credential-file "$credential_file" \
   --use-credentials-from-config=true \
   --github-api-bearer-auth=true \
   --validate-starlark=STRICT \
-  "$COPYBARA_CONFIG" "$COPYBARA_WORKFLOW" "$COPYBARA_SOURCE_REF"
+  "${extra_args[@]}" \
+  "$COPYBARA_CONFIG" "$COPYBARA_WORKFLOW" "$origin_ref"
