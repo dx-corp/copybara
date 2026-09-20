@@ -125,6 +125,22 @@ jobs:
             --jar bazel-bin/java/com/google/copybara/copybara_deploy.jar \
             --native native/prepared-tree/target/release/copybara-prepared-tree
 
+      - name: Build caller-ready native executable without network dependencies
+        id: native
+        uses: ./.github/actions/build-native-tree
+
+      - name: Verify native action output against Java
+        shell: bash
+        env:
+          NATIVE_BINARY: ${{ steps.native.outputs.binary }}
+          NATIVE_SHA256: ${{ steps.native.outputs.sha256 }}
+        run: |
+          set -euo pipefail
+          printf '%s  %s\n' "$NATIVE_SHA256" "$NATIVE_BINARY" | sha256sum --check --status
+          python3 native/prepared-tree/parity.py \
+            --jar bazel-bin/java/com/google/copybara/copybara_deploy.jar \
+            --native "$NATIVE_BINARY"
+
       - name: Record exact source and artifact digest
         shell: bash
         run: |

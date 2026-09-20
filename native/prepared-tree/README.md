@@ -3,7 +3,10 @@
 This is the first bounded Rust replacement for the **local tree-assembly** part
 of Copybara's `folder.origin` → Git destination path. It is not a replacement for
 Copybara's Starlark engine or GitHub publisher. Production still uses the pinned
-Java release; this binary is not wired into the publishing action.
+Java release by default. Callers can build this tool with the separate
+`.github/actions/build-native-tree` action, pinned to a full source commit.
+The action uses the caller's installed Rust toolchain with `--offline --locked`,
+returns the binary path and its SHA-256, and does not publish or accept tokens.
 
 The reason to extract this piece: Mono already prepares and validates standalone
 packages, supplies explicit origin files, and uses no Copybara transformations.
@@ -86,4 +89,5 @@ deletion. Preserve Mono's existing authorization, ownership, provenance,
 validation and App-token publication boundaries. Evaluate destination Git
 attributes/filters explicitly. A future caller must reject any mismatch before
 publication; do not silently fall back and call that a successful native run.
-No binary release, publisher cutover, or whole-engine rewrite is included here.
+No prebuilt binary release or whole-engine rewrite is included here. Publisher
+selection remains the caller's responsibility and must retain these checks.
