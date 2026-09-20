@@ -1,0 +1,15 @@
+name: Build pinned native prepared-tree tool
+description: Build the dependency-free Rust tree tool from this action's pinned source; no Java, downloads, credentials, or publishing.
+outputs:
+  binary:
+    description: Absolute path to the native prepared-tree executable.
+    value: ${{ steps.build.outputs.binary }}
+  sha256:
+    description: SHA-256 of the executable built on this runner.
+    value: ${{ steps.build.outputs.sha256 }}
+runs:
+  using: composite
+  steps:
+    - id: build
+      shell: bash
+      run: bash "$GITHUB_ACTION_PATH/build.sh"
