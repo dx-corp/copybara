@@ -111,6 +111,20 @@ jobs:
           java -jar bazel-bin/java/com/google/copybara/copybara_deploy.jar version
           java -jar bazel-bin/java/com/google/copybara/copybara_deploy.jar help > /dev/null
 
+      - name: Test native prepared trees against the Java engine
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.93.0 --profile minimal --component rustfmt --component clippy
+          manifest=native/prepared-tree/Cargo.toml
+          cargo +1.93.0 fmt --manifest-path "$manifest" -- --check
+          cargo +1.93.0 clippy --locked --manifest-path "$manifest" --all-targets -- -D warnings
+          cargo +1.93.0 test --locked --manifest-path "$manifest"
+          cargo +1.93.0 build --locked --release --manifest-path "$manifest"
+          python3 native/prepared-tree/parity.py \
+            --jar bazel-bin/java/com/google/copybara/copybara_deploy.jar \
+            --native native/prepared-tree/target/release/copybara-prepared-tree
+
       - name: Record exact source and artifact digest
         shell: bash
         run: |
