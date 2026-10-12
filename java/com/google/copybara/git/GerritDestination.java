@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016 Google Inc.
+ * Copyright (C) 2016 Google LLC
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -36,6 +36,7 @@ import com.google.common.flogger.FluentLogger;
 import com.google.common.hash.Hashing;
 import com.google.copybara.ChangeMessage;
 import com.google.copybara.Destination;
+import com.google.copybara.DestinationInfo;
 import com.google.copybara.Endpoint;
 import com.google.copybara.GeneralOptions;
 import com.google.copybara.LabelFinder;
@@ -334,7 +335,7 @@ public final class GerritDestination implements Destination<GitRevision> {
           }
         }
         String tripletId = changeInfo.getTripletId();
-        ChangeInfo resultInfo = gerritApi.submitChange(tripletId, new SubmitInput(null));
+        gerritApi.submitChange(tripletId, new SubmitInput(null));
         console.infoFmt("Submitted change : %s/changes/%s", repoUrl, tripletId);
       } catch (RepoException e) {
         Matcher matcher = USER_ERROR_REGEX_PATTERN.matcher(e.getMessage());
@@ -595,6 +596,7 @@ public final class GerritDestination implements Destination<GitRevision> {
 
   static GerritDestination newGerritDestination(
       Options options,
+      @Nullable DestinationInfo destinationInfo,
       String url,
       String fetch,
       String pushToRefsFor,
@@ -649,6 +651,7 @@ public final class GerritDestination implements Destination<GitRevision> {
                 partialFetch,
                 gerritSubmit,
                 primaryBranchMigrationMode),
+            destinationInfo,
             integrates,
             checker,
             credentials),
