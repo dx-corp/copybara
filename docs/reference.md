@@ -976,7 +976,7 @@ Name | Type | Description
 <span style="white-space: nowrap;">`--force, --force-update`</span> | *boolean* | Force the migration even if Copybara cannot find in the destination a change that is an ancestor of the one(s) being migrated. This should be used with care, as it could lose changes when migrating a previous/conflicting change.
 <span style="white-space: nowrap;">`--info-include-definition`</span> | *boolean* | When set, the INFO command will include the migrations' definition stack info in the table or list output. In table, leaves out origin, destination and mode.
 <span style="white-space: nowrap;">`--info-list-only`</span> | *boolean* | When set, the INFO command will print a list of workflows defined in the file.
-<span style="white-space: nowrap;">`--labels`</span> | *immutableMap* | Additional flags. Can be accessed in feedback and mirror context objects via the `cli_labels` field. In `core.workflow`, they are accessible as labels, but with names uppercased and prefixed with FLAG_ to avoid name clashes with existing labels. I.e. `--labels=label1:value1` will define a label FLAG_LABEL1Format: --labels=flag1:value1,flag2:value2 Or: --labels flag1:value1,flag2:value2 
+<span style="white-space: nowrap;">`--labels`</span> | *immutableMap* | Additional flags. Can be accessed in feedback and mirror context objects via the `cli_labels` field. In `core.workflow`, they are accessible as labels, but with names uppercased and prefixed with FLAG_ to avoid name clashes with existing labels. I.e. `--labels=label1:value1` will define a label FLAG_LABEL1. Format: --labels=flag1:value1,flag2:value2 Or: --labels flag1:value1,flag2:value2
 <span style="white-space: nowrap;">`--noansi`</span> | *boolean* | Don't use ANSI output for messages
 <span style="white-space: nowrap;">`--nocleanup`</span> | *boolean* | Cleanup the output directories. This includes the workdir, scratch clones of Git repos, etc. By default is set to false and directories will be cleaned prior to the execution. If set to true, the previous run output will not be cleaned up. Keep in mind that running in this mode will lead to an ever increasing disk usage.
 <span style="white-space: nowrap;">`--noprompt`</span> | *boolean* | Don't prompt, this will answer all prompts with 'yes'
@@ -3218,6 +3218,7 @@ Name | Type | Description
 <span style="white-space: nowrap;">`--experiment-checkout-affected-files`</span> | *boolean* | If set, copybara will only checkout affected files at git origin. Note that this is experimental.
 <span style="white-space: nowrap;">`--git-credential-helper-store-file`</span> | *string* | Credentials store file to be used. See https://git-scm.com/docs/git-credential-store
 <span style="white-space: nowrap;">`--git-http-follow-redirects`</span> | *string* | Whether git should follow HTTP redirects. For a list of valid options, please see https://git-scm.com/docs/git-config#Documentation/git-config.txt-httpfollowRedirects
+<span style="white-space: nowrap;">`--git-integrate-allow-ref`</span> | *list* | List of repository URL prefixes that git.integrate is allowed to fetch from. If empty, only the destination repository URL is allowed.
 <span style="white-space: nowrap;">`--git-ls-remote-limit`</span> | *integer* | Limit the number of ls-remote rows is visible to Copybara.
 <span style="white-space: nowrap;">`--git-no-verify`</span> | *boolean* | Pass the '--no-verify' option to git pushes and commits to disable git commit hooks.
 <span style="white-space: nowrap;">`--git-origin-fetch-depth`</span> | *integer* | Use a shallow clone of the specified depth for git.origin. If set, only the n most recent changes' tree states are imported with older changes omitted.
@@ -3765,7 +3766,7 @@ Name | Type | Description
 
 Integrate changes from a url present in the migrated change label.
 
-<code>git_integrate</code> <code>git.integrate(<a href=#git.integrate.label>label</a>="COPYBARA_INTEGRATE_REVIEW", <a href=#git.integrate.strategy>strategy</a>="FAKE_MERGE_AND_INCLUDE_FILES", <a href=#git.integrate.ignore_errors>ignore_errors</a>=True, <a href=#git.integrate.allow_unrelated_history>allow_unrelated_history</a>=False, <a href=#git.integrate.merge_commit_message>merge_commit_message</a>="${MERGE_MSG}")</code>
+<code>git_integrate</code> <code>git.integrate(<a href=#git.integrate.label>label</a>="COPYBARA_INTEGRATE_REVIEW", <a href=#git.integrate.strategy>strategy</a>="FAKE_MERGE_AND_INCLUDE_FILES", <a href=#git.integrate.ignore_errors>ignore_errors</a>=True, <a href=#git.integrate.allow_unrelated_history>allow_unrelated_history</a>=False, <a href=#git.integrate.merge_commit_message>merge_commit_message</a>="${MERGE_MSG}", <a href=#git.integrate.allow_protocol_ref>allow_protocol_ref</a>=False, <a href=#git.integrate.allowed_ref_prefixes>allowed_ref_prefixes</a>=[])</code>
 
 
 <h4 id="parameters.git.integrate">Parameters:</h4>
@@ -3777,6 +3778,8 @@ Parameter | Description
 <span id=git.integrate.ignore_errors href=#git.integrate.ignore_errors>ignore_errors</span> | <code><a href="#bool">bool</a></code><br><p>If we should ignore integrate errors and continue the migration without the integrate</p>
 <span id=git.integrate.allow_unrelated_history href=#git.integrate.allow_unrelated_history>allow_unrelated_history</span> | <code><a href="#bool">bool</a></code><br><p>If true allow integrates of unrelated histories.</p>
 <span id=git.integrate.merge_commit_message href=#git.integrate.merge_commit_message>merge_commit_message</span> | <code><a href="#string">string</a></code><br><p>The template for the merge commit message. Use ${MERGE_MSG} for default message and ${SUMMARY_FROM_TRANSFORM} for summary of the transform. All other labels from the TransformResult are available, but destination labels might not. It will use the first label value if multiple are defined. See metadata.replace_message for semantics</p>
+<span id=git.integrate.allow_protocol_ref href=#git.integrate.allow_protocol_ref>allow_protocol_ref</span> | <code><a href="#bool">bool</a></code><br><p>If true, allow protocol markers (://) in generic git integrate references. Enabling this might be required for non-GitHub repos when no remote is configured.</p>
+<span id=git.integrate.allowed_ref_prefixes href=#git.integrate.allowed_ref_prefixes>allowed_ref_prefixes</span> | <code>sequence of <a href="#string">string</a></code><br><p>List of repository URL prefixes that git.integrate is allowed to fetch from. If empty, only the destination repository URL is allowed.</p>
 
 
 <h4 id="example.git.integrate">Examples:</h4>
@@ -8932,7 +8935,7 @@ Remove a label from the message if present
 Parameter | Description
 --------- | -----------
 <span id=ctx.remove_label.label href=#ctx.remove_label.label>label</span> | <code><a href="#string">string</a></code><br><p>The label to delete</p>
-<span id=ctx.remove_label.whole_message href=#ctx.remove_label.whole_message>whole_message</span> | <code><a href="#bool">bool</a></code><br><p>By default Copybara only looks in the last paragraph for labels. This flagmake it replace labels in the whole message.</p>
+<span id=ctx.remove_label.whole_message href=#ctx.remove_label.whole_message>whole_message</span> | <code><a href="#bool">bool</a></code><br><p>By default Copybara only looks in the last paragraph for labels to replace. If True, replace labels in the entire message.</p>
 
 <a id="ctx.replace_label" aria-hidden="true"></a>
 ### ctx.replace_label
@@ -8949,7 +8952,7 @@ Parameter | Description
 <span id=ctx.replace_label.label href=#ctx.replace_label.label>label</span> | <code><a href="#string">string</a></code><br><p>The label to replace</p>
 <span id=ctx.replace_label.value href=#ctx.replace_label.value>value</span> | <code><a href="#string">string</a></code><br><p>The new value for the label</p>
 <span id=ctx.replace_label.separator href=#ctx.replace_label.separator>separator</span> | <code><a href="#string">string</a></code><br><p>The separator to use for the label</p>
-<span id=ctx.replace_label.whole_message href=#ctx.replace_label.whole_message>whole_message</span> | <code><a href="#bool">bool</a></code><br><p>By default Copybara only looks in the last paragraph for labels. This flagmake it replace labels in the whole message.</p>
+<span id=ctx.replace_label.whole_message href=#ctx.replace_label.whole_message>whole_message</span> | <code><a href="#bool">bool</a></code><br><p>By default Copybara only looks in the last paragraph for labels to replace. If True, replace labels in the entire message.</p>
 
 <a id="ctx.run" aria-hidden="true"></a>
 ### ctx.run
@@ -9127,6 +9130,7 @@ Name | Type | Description
 <span style="white-space: nowrap;">`--force, --force-update`</span> | *boolean* | Force the migration even if Copybara cannot find in the destination a change that is an ancestor of the one(s) being migrated. This should be used with care, as it could lose changes when migrating a previous/conflicting change.
 <span style="white-space: nowrap;">`--git-credential-helper-store-file`</span> | *string* | Credentials store file to be used. See https://git-scm.com/docs/git-credential-store
 <span style="white-space: nowrap;">`--git-http-follow-redirects`</span> | *string* | Whether git should follow HTTP redirects. For a list of valid options, please see https://git-scm.com/docs/git-config#Documentation/git-config.txt-httpfollowRedirects
+<span style="white-space: nowrap;">`--git-integrate-allow-ref`</span> | *list* | List of repository URL prefixes that git.integrate is allowed to fetch from. If empty, only the destination repository URL is allowed.
 <span style="white-space: nowrap;">`--git-ls-remote-limit`</span> | *integer* | Limit the number of ls-remote rows is visible to Copybara.
 <span style="white-space: nowrap;">`--git-no-verify`</span> | *boolean* | Pass the '--no-verify' option to git pushes and commits to disable git commit hooks.
 <span style="white-space: nowrap;">`--git-origin-fetch-depth`</span> | *integer* | Use a shallow clone of the specified depth for git.origin. If set, only the n most recent changes' tree states are imported with older changes omitted.
@@ -9135,7 +9139,7 @@ Name | Type | Description
 <span style="white-space: nowrap;">`--git-tag-overwrite`</span> | *boolean* | If set, copybara will force update existing git tag
 <span style="white-space: nowrap;">`--info-include-definition`</span> | *boolean* | When set, the INFO command will include the migrations' definition stack info in the table or list output. In table, leaves out origin, destination and mode.
 <span style="white-space: nowrap;">`--info-list-only`</span> | *boolean* | When set, the INFO command will print a list of workflows defined in the file.
-<span style="white-space: nowrap;">`--labels`</span> | *immutableMap* | Additional flags. Can be accessed in feedback and mirror context objects via the `cli_labels` field. In `core.workflow`, they are accessible as labels, but with names uppercased and prefixed with FLAG_ to avoid name clashes with existing labels. I.e. `--labels=label1:value1` will define a label FLAG_LABEL1Format: --labels=flag1:value1,flag2:value2 Or: --labels flag1:value1,flag2:value2 
+<span style="white-space: nowrap;">`--labels`</span> | *immutableMap* | Additional flags. Can be accessed in feedback and mirror context objects via the `cli_labels` field. In `core.workflow`, they are accessible as labels, but with names uppercased and prefixed with FLAG_ to avoid name clashes with existing labels. I.e. `--labels=label1:value1` will define a label FLAG_LABEL1. Format: --labels=flag1:value1,flag2:value2 Or: --labels flag1:value1,flag2:value2
 <span style="white-space: nowrap;">`--noansi`</span> | *boolean* | Don't use ANSI output for messages
 <span style="white-space: nowrap;">`--nocleanup`</span> | *boolean* | Cleanup the output directories. This includes the workdir, scratch clones of Git repos, etc. By default is set to false and directories will be cleaned prior to the execution. If set to true, the previous run output will not be cleaned up. Keep in mind that running in this mode will lead to an ever increasing disk usage.
 <span style="white-space: nowrap;">`--nogit-credential-helper-store`</span> | *boolean* | Disable using credentials store. See https://git-scm.com/docs/git-credential-store

@@ -137,6 +137,13 @@ public class GitOptions implements Option {
   public boolean gitNoVerify = false;
 
   @Parameter(
+      names = "--git-integrate-allow-ref",
+      description =
+          "List of repository URL prefixes that git.integrate is allowed to fetch from. If empty,"
+              + " only the destination repository URL is allowed.")
+  public List<String> allowIntegrateRef = new ArrayList<>();
+
+  @Parameter(
       names = USE_CREDENTIALS_FROM_CONFIG,
       description = "" + "If the config includes credentials, use these.  This is intended for "
           + "workflow engines injecting secrets into the config and not for CLI use.",
