@@ -25,6 +25,7 @@ import com.google.copybara.exception.RepoException;
 import com.google.copybara.exception.ValidationException;
 import com.google.copybara.git.github.util.GitHubHost;
 import com.google.copybara.git.github.util.GitHubHost.GitHubPrUrl;
+import com.google.copybara.git.github.util.GitHubIdentifier;
 import com.google.copybara.git.github.util.GitHubUtil;
 import com.google.re2j.Matcher;
 import com.google.re2j.Pattern;
@@ -53,8 +54,14 @@ public enum GitRepoType {
      */
     @Override
     GitRevision resolveRef(
-        GitRepository repository, String repoUrl, String ref, GeneralOptions generalOptions,
-        boolean describeVersion, boolean partialFetch, Optional<Integer> fetchDepth)
+        GitRepository repository,
+        String repoUrl,
+        String ref,
+        GeneralOptions generalOptions,
+        boolean describeVersion,
+        boolean partialFetch,
+        Optional<Integer> fetchDepth,
+        boolean recurseSubmodules)
         throws RepoException, ValidationException {
       logger.atInfo().log("Resolving %s reference: %s", repoUrl, ref);
       Matcher shaWithPatchSet = SHA_WITH_REVIEW_DATA.matcher(ref);
@@ -65,7 +72,8 @@ public enum GitRepoType {
                 shaWithPatchSet.group(1),
                 /* fetchTags= */ describeVersion,
                 partialFetch,
-                fetchDepth);
+                fetchDepth,
+                recurseSubmodules);
         return new GitRevision(
             repository,
             rev.getHash(),
@@ -78,14 +86,16 @@ public enum GitRepoType {
 
       if (!GIT_URL.matcher(ref).matches() && !FILE_URL.matcher(ref).matches()) {
         // If ref is not an url try a normal fetch of repoUrl and ref
-        return fetchFromUrl(repository, repoUrl, ref, describeVersion, partialFetch, fetchDepth);
+        return fetchFromUrl(
+            repository, repoUrl, ref, describeVersion, partialFetch, fetchDepth, recurseSubmodules);
       }
       String msg = "Git origin URL overwritten in the command line as " + ref;
       generalOptions.console().warn(msg);
       logger.atWarning().log("%s. Config value was: %s", msg, repoUrl);
       generalOptions.console().progress("Fetching HEAD for " + ref);
-      GitRevision ghPullRequest = maybeFetchGithubPullRequest(repository, repoUrl, ref,
-          describeVersion, partialFetch);
+      GitRevision ghPullRequest =
+          maybeFetchGithubPullRequest(
+              repository, repoUrl, ref, describeVersion, partialFetch, recurseSubmodules);
       if (ghPullRequest != null) {
         return ghPullRequest;
       }
@@ -99,9 +109,11 @@ public enum GitRepoType {
             ref.substring(spaceIdx + 1),
             describeVersion,
             partialFetch,
-            fetchDepth);
+            fetchDepth,
+            recurseSubmodules);
       }
-      return fetchFromUrl(repository, ref, "HEAD", describeVersion, partialFetch, fetchDepth);
+      return fetchFromUrl(
+          repository, ref, "HEAD", describeVersion, partialFetch, fetchDepth, recurseSubmodules);
     }
 
     private GitRevision fetchFromUrl(
@@ -110,10 +122,16 @@ public enum GitRepoType {
         String ref,
         boolean describeVersion,
         boolean partialFetch,
-        Optional<Integer> fetchDepth)
+        Optional<Integer> fetchDepth,
+        boolean recurseSubmodules)
         throws RepoException, ValidationException {
       return repository.fetchSingleRefWithTags(
-          repoUrl, ref, /* fetchTags= */ describeVersion, partialFetch, fetchDepth);
+          repoUrl,
+          ref,
+          /* fetchTags= */ describeVersion,
+          partialFetch,
+          fetchDepth,
+          recurseSubmodules);
     }
   },
   @DocField(description = "A git repository hosted in Github")
@@ -125,58 +143,104 @@ public enum GitRepoType {
      */
     @Override
     GitRevision resolveRef(
-        GitRepository repository, String repoUrl, String ref, GeneralOptions generalOptions,
-        boolean describeVersion, boolean partialFetch, Optional<Integer> fetchDepth)
+        GitRepository repository,
+        String repoUrl,
+        String ref,
+        GeneralOptions generalOptions,
+        boolean describeVersion,
+        boolean partialFetch,
+        Optional<Integer> fetchDepth,
+        boolean recurseSubmodules)
         throws RepoException, ValidationException {
-      if ((ref.startsWith("https://github.com") && ref.startsWith(repoUrl))
+      if ((ref.startsWith("https://") && ref.startsWith(repoUrl))
           || GitHubUtil.maybeParseGithubPrFromMergeOrHeadRef(ref).isPresent()) {
-        GitRevision ghPullRequest = maybeFetchGithubPullRequest(repository, repoUrl, ref,
-            describeVersion, partialFetch);
+        GitRevision ghPullRequest =
+            maybeFetchGithubPullRequest(
+                repository, repoUrl, ref, describeVersion, partialFetch, recurseSubmodules);
         if (ghPullRequest != null) {
           return ghPullRequest;
         }
       }
       return GIT.resolveRef(
-          repository, repoUrl, ref, generalOptions, describeVersion, partialFetch, fetchDepth);
+          repository,
+          repoUrl,
+          ref,
+          generalOptions,
+          describeVersion,
+          partialFetch,
+          fetchDepth,
+          recurseSubmodules);
     }
   },
   @DocField(description = "A git repository hosted in GitLab")
   GITLAB {
     @Override
     GitRevision resolveRef(
-        GitRepository repository, String repoUrl, String ref, GeneralOptions generalOptions,
-        boolean describeVersion, boolean partialFetch, Optional<Integer> fetchDepth)
+        GitRepository repository,
+        String repoUrl,
+        String ref,
+        GeneralOptions generalOptions,
+        boolean describeVersion,
+        boolean partialFetch,
+        Optional<Integer> fetchDepth,
+        boolean recurseSubmodules)
         throws RepoException, ValidationException {
       // TODO(linjordan): Implement GitLab merge request resolution
       return GIT.resolveRef(
-          repository, repoUrl, ref, generalOptions, describeVersion, partialFetch, fetchDepth);
+          repository,
+          repoUrl,
+          ref,
+          generalOptions,
+          describeVersion,
+          partialFetch,
+          fetchDepth,
+          recurseSubmodules);
     }
   },
   @DocField(description = "A Gerrit code review repository")
   GERRIT {
     @Override
     GitRevision resolveRef(
-        GitRepository repository, String repoUrl, String ref, GeneralOptions options,
-        boolean describeVersion, boolean partialFetch, Optional<Integer> fetchDepth)
+        GitRepository repository,
+        String repoUrl,
+        String ref,
+        GeneralOptions options,
+        boolean describeVersion,
+        boolean partialFetch,
+        Optional<Integer> fetchDepth,
+        boolean recurseSubmodules)
         throws RepoException, ValidationException {
       if (ref == null || ref.isEmpty()) {
         // TODO(malcon): Deprecate this. Gerrit origin should only be used with changes or
         // (maybe) overwrite url as a ref.
-        return GIT.resolveRef(repository, repoUrl, ref, options, describeVersion, partialFetch,
-            fetchDepth);
+        return GIT.resolveRef(
+            repository,
+            repoUrl,
+            ref,
+            options,
+            describeVersion,
+            partialFetch,
+            fetchDepth,
+            recurseSubmodules);
       }
 
       GerritChange change = GerritChange
           .resolve(repository, repoUrl, ref, options);
 
       if (change != null) {
-        return change.fetch(ImmutableMultimap.of());
+        return change.fetch(ImmutableMultimap.of(), recurseSubmodules);
       }
 
       // Try git base resolve to resolve almost anything that can be git (sha, random urls, etc.)
-      return GIT.resolveRef(repository, repoUrl, ref, options, describeVersion, partialFetch,
-          fetchDepth);
-
+      return GIT.resolveRef(
+          repository,
+          repoUrl,
+          ref,
+          options,
+          describeVersion,
+          partialFetch,
+          fetchDepth,
+          recurseSubmodules);
     }
   };
 
@@ -185,21 +249,45 @@ public enum GitRepoType {
    * reference. Otherwise return null.
    */
   @Nullable
-  protected static GitRevision maybeFetchGithubPullRequest(GitRepository repository,
-      String repoUrl, String ref, boolean describeVersion, boolean partialFetch)
+  protected static GitRevision maybeFetchGithubPullRequest(
+      GitRepository repository,
+      String repoUrl,
+      String ref,
+      boolean describeVersion,
+      boolean partialFetch)
       throws RepoException, ValidationException {
-    GitHubHost gitHubHost = new GitHubHost("github.com");
+    return maybeFetchGithubPullRequest(
+        repository, repoUrl, ref, describeVersion, partialFetch, /* recurseSubmodules= */ true);
+  }
+
+  @Nullable
+  protected static GitRevision maybeFetchGithubPullRequest(
+      GitRepository repository,
+      String repoUrl,
+      String ref,
+      boolean describeVersion,
+      boolean partialFetch,
+      boolean recurseSubmodules)
+      throws RepoException, ValidationException {
+    String host = "github.com";
+    try {
+      host = GitHubIdentifier.create(repoUrl).getHostName();
+    } catch (IllegalArgumentException ignored) {
+      // Fallback to github.com when repoUrl is not a GitHub URL.
+    }
+    GitHubHost gitHubHost = new GitHubHost(host);
     Optional<GitHubPrUrl> githubPrUrl = gitHubHost.maybeParseGithubPrUrl(ref);
     if (githubPrUrl.isPresent()) {
       // TODO(malcon): Support merge ref too once we have github pr origin.
       String stableRef = GitHubUtil.asHeadRef(githubPrUrl.get().getPrNumber());
       GitRevision gitRevision =
           repository.fetchSingleRefWithTags(
-              "https://github.com/" + githubPrUrl.get().getProject(),
+              gitHubHost.projectAsUrl(githubPrUrl.get().getProject()),
               stableRef,
               /* fetchTags= */ describeVersion,
               partialFetch,
-              Optional.empty());
+              Optional.empty(),
+              recurseSubmodules);
       return new GitRevision(
           repository,
           gitRevision.getHash(),
@@ -211,7 +299,12 @@ public enum GitRepoType {
     if (GitHubUtil.maybeParseGithubPrFromMergeOrHeadRef(ref).isPresent()) {
       GitRevision gitRevision =
           repository.fetchSingleRefWithTags(
-              repoUrl, ref, /* fetchTags= */ describeVersion, partialFetch, Optional.empty());
+              repoUrl,
+              ref,
+              /* fetchTags= */ describeVersion,
+              partialFetch,
+              Optional.empty(),
+              recurseSubmodules);
       return new GitRevision(
           repository,
           gitRevision.getHash(),
@@ -241,9 +334,34 @@ public enum GitRepoType {
   public static final String GERRIT_CHANGE_DESCRIPTION_LABEL =
       GerritChange.GERRIT_CHANGE_DESCRIPTION_LABEL;
 
-  abstract GitRevision resolveRef(
-      GitRepository repository, String repoUrl, String ref, GeneralOptions generalOptions,
-      boolean describeVersion, boolean partialFetch, Optional<Integer> fetchDepth)
-      throws RepoException, ValidationException;
+  GitRevision resolveRef(
+      GitRepository repository,
+      String repoUrl,
+      String ref,
+      GeneralOptions generalOptions,
+      boolean describeVersion,
+      boolean partialFetch,
+      Optional<Integer> fetchDepth)
+      throws RepoException, ValidationException {
+    return resolveRef(
+        repository,
+        repoUrl,
+        ref,
+        generalOptions,
+        describeVersion,
+        partialFetch,
+        fetchDepth,
+        /* recurseSubmodules= */ true);
+  }
 
+  abstract GitRevision resolveRef(
+      GitRepository repository,
+      String repoUrl,
+      String ref,
+      GeneralOptions generalOptions,
+      boolean describeVersion,
+      boolean partialFetch,
+      Optional<Integer> fetchDepth,
+      boolean recurseSubmodules)
+      throws RepoException, ValidationException;
 }

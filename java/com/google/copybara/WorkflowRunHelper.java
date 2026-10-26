@@ -840,7 +840,7 @@ public class WorkflowRunHelper<O extends Revision, D extends Revision> {
                   console,
                   originApi,
                   destinationApi,
-                  destinationReader);
+                  destinationBaseline);
           try {
             ImmutableList<DiffFile> affectedFiles =
                 DiffUtil.diffFiles(
@@ -976,7 +976,7 @@ public class WorkflowRunHelper<O extends Revision, D extends Revision> {
                 console,
                 originApi,
                 destinationApi,
-                () -> reader);
+                destinationBaseline);
       }
 
       Path preMergeImportWorkdir =
@@ -1148,7 +1148,7 @@ public class WorkflowRunHelper<O extends Revision, D extends Revision> {
         Console console,
         LazyResourceLoader<Endpoint> originApi,
         LazyResourceLoader<Endpoint> destinationApi,
-        ResourceSupplier<DestinationReader> destinationReader)
+        @Nullable Baseline<?> destinationBaseline)
         throws IOException, RepoException, ValidationException {
       Path baselineWorkdir = Files.createDirectories(workdir.resolve(subdirName));
 
@@ -1168,7 +1168,7 @@ public class WorkflowRunHelper<O extends Revision, D extends Revision> {
                   resolvedRef,
                   originApi,
                   destinationApi,
-                  destinationReader,
+                  () -> writer.getDestinationReader(console, destinationBaseline, baselineWorkdir),
                   getWorkflow().getMode().toString())
               // Again, we don't care about this
               .withLastRev(lastRev)
@@ -1224,9 +1224,11 @@ public class WorkflowRunHelper<O extends Revision, D extends Revision> {
       // Remove excluded origin files.
       PathMatcher originFiles = getOriginFiles().relativeTo(checkoutDir);
       processConsole.progress("Removing excluded origin files");
-
-      int deleted = FileUtil.deleteFilesRecursively(
-          checkoutDir, FileUtil.notPathMatcher(originFiles));
+      int deleted = 0;
+      try (var _ = profiler().start("remove_excluded_origin_files")) {
+        deleted =
+            FileUtil.deleteFilesRecursively(checkoutDir, FileUtil.notPathMatcher(originFiles));
+      }
       if (deleted != 0) {
         processConsole.infoFmt(
             "Removed %d files from workdir that do not match origin_files", deleted);
@@ -1249,10 +1251,7 @@ public class WorkflowRunHelper<O extends Revision, D extends Revision> {
   }
 
   public Path importAndTransformRevision(
-      Console console,
-      O lastRev,
-      O currentRev,
-      ResourceSupplier<DestinationReader> destinationReader)
+      Console console, O lastRev, O currentRev, @Nullable Baseline<?> destinationBaseline)
       throws RepoException, ValidationException, IOException {
 
     ChangeMigrator<O, D> migrator = getDefaultMigrator();
@@ -1268,7 +1267,7 @@ public class WorkflowRunHelper<O extends Revision, D extends Revision> {
         console,
         originApi,
         destinationApi,
-        destinationReader);
+        destinationBaseline);
   }
 
   /**

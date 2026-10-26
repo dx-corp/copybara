@@ -115,7 +115,7 @@ public class GitOptions implements Option {
           "Disable username/password prompt and fail if no credentials are found. This "
               + "flag sets the environment variable GIT_TERMINAL_PROMPT which is intended for"
               + " automated jobs running Git"
-              + " https://git-scm.com/docs/git/2.3.0#git-emGITTERMINALPROMPTem")
+              + " https://git-scm.com/docs/git#Documentation/git.txt-GITTERMINALPROMPT")
   public boolean noGitPrompt = false;
 
   @Parameter(names = "--git-visit-changes-page-size",
@@ -135,6 +135,13 @@ public class GitOptions implements Option {
   @Parameter(names = "--git-no-verify", description =
       "Pass the '--no-verify' option to git pushes and commits to disable git commit hooks.")
   public boolean gitNoVerify = false;
+
+  @Parameter(
+      names = "--git-integrate-allow-ref",
+      description =
+          "List of repository URL prefixes that git.integrate is allowed to fetch from. If empty,"
+              + " only the destination repository URL is allowed.")
+  public List<String> allowIntegrateRef = new ArrayList<>();
 
   @Parameter(
       names = USE_CREDENTIALS_FROM_CONFIG,
