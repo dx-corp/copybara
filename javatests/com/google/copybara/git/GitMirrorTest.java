@@ -109,9 +109,9 @@ public class GitMirrorTest {
 
   @Test
   public void testMirror() throws Exception {
-    RecordingListener recordingCallback = installProfiler();
-
     Migration mirror = createMirrorObj();
+
+    RecordingListener recordingCallback = installProfiler();
     mirror.run(workdir, ImmutableList.of());
     String orig = originRepo.simpleCommand("show-ref").getStdout();
     String dest = destRepo.simpleCommand("show-ref").getStdout();
@@ -945,6 +945,58 @@ public class GitMirrorTest {
 
     // We pushed HEAD~1 to the destination:
     assertEquals(destRepo.getHeadRef().getHash(), two.commit().getHash());
+  }
+
+  @Test
+  public void testActionDryRunSkipsPush() throws Exception {
+    String cfg =
+        """
+        def test(ctx):
+             ctx.origin_fetch(refspec = ['refs/heads/*:refs/heads/*'])
+             ctx.destination_push(['refs/heads/*:refs/heads/*'])
+             return ctx.success()
+
+        git.mirror(
+            name = 'default',
+            origin = 'file://%s',
+            destination = 'file://%s',
+            action = test,
+        )
+        """
+            .formatted(
+                originRepo.getGitDir().toAbsolutePath(), destRepo.getGitDir().toAbsolutePath());
+    options.general.dryRunMode = true;
+    Migration mirror = loadMigration(cfg, "default");
+
+    mirror.run(workdir, ImmutableList.of());
+
+    assertThat(destRepo.showRef()).isEmpty();
+    console.assertThat().onceInLog(MessageType.INFO, "Dry run: skipping push of .*");
+  }
+
+  @Test
+  public void testActionCliLabels() throws Exception {
+    String cfg =
+        """
+        def test(ctx):
+             ctx.console.info('label: ' + ctx.cli_labels['foo'])
+             return ctx.success()
+
+        git.mirror(
+            name = 'default',
+            origin = 'file://%s',
+            destination = 'file://%s',
+            action = test,
+        )
+        """
+            .formatted(
+                originRepo.getGitDir().toAbsolutePath(), destRepo.getGitDir().toAbsolutePath());
+    options.general.setCliLabelsForTest(ImmutableMap.of("foo", "bar"));
+    Migration mirror = loadMigration(cfg, "default");
+
+    mirror.run(workdir, ImmutableList.of());
+
+    console.assertThat().onceInLog(MessageType.INFO, "label: bar");
   }
 
   @Test

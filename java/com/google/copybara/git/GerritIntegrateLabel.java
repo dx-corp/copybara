@@ -16,6 +16,7 @@
 
 package com.google.copybara.git;
 
+import com.google.common.base.CharMatcher;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
 import com.google.copybara.GeneralOptions;
@@ -24,6 +25,7 @@ import com.google.copybara.exception.RepoException;
 import com.google.copybara.exception.ValidationException;
 import com.google.re2j.Matcher;
 import com.google.re2j.Pattern;
+import java.util.List;
 import java.util.Optional;
 import javax.annotation.Nullable;
 
@@ -81,6 +83,39 @@ class GerritIntegrateLabel implements IntegrateLabel {
            : null;
   }
 
+  static Optional<IntegrateLabel> maybeParse(
+      String str,
+      GitRepository repository,
+      String repoUrl,
+      GeneralOptions generalOptions,
+      List<String> allowedRefPrefixes)
+      throws ValidationException {
+    GerritIntegrateLabel label = parse(str, repository, generalOptions);
+    if (label == null) {
+      return Optional.empty();
+    }
+    boolean matchesDestination =
+        CharMatcher.is('/')
+            .trimTrailingFrom(label.url)
+            .equals(CharMatcher.is('/').trimTrailingFrom(repoUrl));
+    if (!matchesDestination) {
+      if (allowedRefPrefixes.isEmpty()) {
+        throw new ValidationException(
+            String.format(
+                "Integrate URL in '%s' does not match destination repository URL '%s'.",
+                str.trim(), repoUrl));
+      }
+      ValidationException.checkCondition(
+          allowedRefPrefixes.stream().anyMatch(label.url::startsWith),
+          "Integrate URL in '%s' does not match destination repository URL '%s' or any allowed"
+              + " prefix (%s).",
+          str.trim(),
+          repoUrl,
+          allowedRefPrefixes);
+    }
+    return Optional.of(label);
+  }
+
   @Override
   public String toString() {
     return String.format("gerrit %s %d%s%s", url, changeNumber,
@@ -113,8 +148,14 @@ class GerritIntegrateLabel implements IntegrateLabel {
           latestPatchSet);
     }
 
-    return GitRepoType.GERRIT.resolveRef(repository, url,
+    return GitRepoType.GERRIT.resolveRef(
+        repository,
+        url,
         String.format("refs/changes/%02d/%d", changeNumber % 100, changeNumber) + "/" + patchSet,
-        generalOptions, /*describeVersion=*/false, /*partialFetch=*/ false, Optional.empty());
+        generalOptions,
+        /* describeVersion= */ false,
+        /* partialFetch= */ false,
+        Optional.empty(),
+        /* recurseSubmodules= */ false);
   }
 }

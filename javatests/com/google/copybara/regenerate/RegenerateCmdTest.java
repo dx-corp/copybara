@@ -746,7 +746,7 @@ public class RegenerateCmdTest {
     String expectedSeriesPath = "test/patches/series";
     assertThatPath(pathArg.getValue()).containsFiles(expectedSeriesPath);
     String seriesContent = Files.readString(pathArg.getValue().resolve(expectedSeriesPath));
-    assertThat(seriesContent.trim()).isEqualTo("local.patch");
+    assertThat(seriesContent).isEqualTo("local.patch\n");
 
     assertThat(exitCode).isEqualTo(ExitCode.SUCCESS);
   }
@@ -853,7 +853,7 @@ public class RegenerateCmdTest {
     String expectedSeriesPath = "test/patches/series";
     assertThatPath(pathArg.getValue()).containsFiles(expectedSeriesPath);
     String seriesContent = Files.readString(pathArg.getValue().resolve(expectedSeriesPath));
-    assertThat(seriesContent.trim()).isEqualTo("command_line.patch");
+    assertThat(seriesContent).isEqualTo("command_line.patch\n");
 
     assertThat(exitCode).isEqualTo(ExitCode.SUCCESS);
   }
@@ -1847,5 +1847,57 @@ public class RegenerateCmdTest {
     )\\
     """
         .formatted(consistencyPath, patchPath, description);
+  }
+
+  // Runs RegenerateCmd targeting the workflow with the name 'default_service', which shares the
+  // consistency file path with a workflow named 'default', defined in
+  // getConsistencyFileConfigString(), and verifies that the regenerated consistency file header
+  // contains '# Workflow: copy.bara.sky:default' (and not 'default_service').
+  @Test
+  public void testConsistencyFile_sharedPathUsesSecondaryWorkflowName() throws Exception {
+    String dir1 = "dir1";
+    setupBaseline(dir1);
+    String dir2 = "dir2";
+    setupTarget(dir2);
+    String testfile = "file.txt";
+    writeDestination(dir1, testfile, "dir1content");
+    writeDestination(dir2, testfile, "dir2content");
+    setupBaselineConsistencyFile(dir1, dir1);
+    String config =
+        getConsistencyFileConfigString()
+            + "\n"
+            + """
+            core.workflow(
+                name = 'default_service',
+                origin = testing.origin(),
+                origin_files = glob(['**']),
+                destination = testing.destination(),
+                mode = 'SQUASH',
+                authoring = authoring.pass_thru('example <example@example.com>'),
+                merge_import = core.merge_import_config(
+                  package_path = "",
+                  use_consistency_file = True
+                ),
+                consistency_file = core.consistency_file_config(
+                    path = "%s",
+                    workflow_name = "default",
+                ),
+            )
+            """
+                .formatted(CONSISTENCY_FILE_PATH);
+    RegenerateCmd cmd = getCmd(config);
+    CommandEnv commandEnv =
+        prepAndGetCommandEnv(
+            ImmutableList.of(testRoot.resolve("copy.bara.sky").toString(), "default_service"), cmd);
+
+    ExitCode exitCode = cmd.run(commandEnv);
+
+    assertThat(exitCode).isEqualTo(ExitCode.SUCCESS);
+    ArgumentCaptor<Path> pathArg = ArgumentCaptor.forClass(Path.class);
+    verify(patchRegenerator).updateChange(any(), pathArg.capture(), eq(Glob.ALL_FILES), eq(dir2));
+
+    String consistencyFile = Files.readString(pathArg.getValue().resolve(CONSISTENCY_FILE_PATH));
+    assertThat(consistencyFile).contains("# Workflow: copy.bara.sky:default\n");
+    assertThat(consistencyFile).doesNotContain("default_service");
   }
 }

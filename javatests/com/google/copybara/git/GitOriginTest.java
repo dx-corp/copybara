@@ -30,8 +30,10 @@ import com.google.api.client.http.HttpTransport;
 import com.google.common.base.Strings;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableListMultimap;
+import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableMultimap;
 import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.ImmutableSetMultimap;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
 import com.google.copybara.ChangeVisitable.VisitResult;
@@ -49,9 +51,7 @@ import com.google.copybara.config.LabelsAwareModule;
 import com.google.copybara.exception.CannotResolveRevisionException;
 import com.google.copybara.exception.EmptyChangeException;
 import com.google.copybara.exception.RepoException;
-import com.google.common.collect.ImmutableMap;
 import com.google.copybara.exception.ValidationException;
-
 import com.google.copybara.git.GitCredential.UserPassword;
 import com.google.copybara.git.GitRevision.GitHashAlgorithm;
 import com.google.copybara.revision.Change;
@@ -211,7 +211,7 @@ public class GitOriginTest {
     String urlSha256 = "file://" + remoteSha256.toFile().getAbsolutePath();
     GitRepository cachedRepo = options.git.cachedBareRepoForUrl(urlSha256);
     FileUtil.deleteRecursively(cachedRepo.getGitDir());
-    cachedRepo.init(GitHashAlgorithm.SHA1);
+    cachedRepo.init(GitHashAlgorithm.SHA1, options.git.gitRefFormat);
 
     // origin.resolve() should trigger cache validation and wipe/re-init as sha256
     origin =
@@ -253,7 +253,7 @@ public class GitOriginTest {
     String urlSha1 = "file://" + remoteSha1.toFile().getAbsolutePath();
     GitRepository cachedRepo = options.git.cachedBareRepoForUrl(urlSha1);
     FileUtil.deleteRecursively(cachedRepo.getGitDir());
-    cachedRepo.init(GitHashAlgorithm.SHA256);
+    cachedRepo.init(GitHashAlgorithm.SHA256, options.git.gitRefFormat);
 
     // origin.resolve() should trigger cache validation and wipe/re-init as sha1
     origin =
@@ -291,7 +291,7 @@ public class GitOriginTest {
     String url = "file://" + remote.toFile().getAbsolutePath();
     GitRepository cachedRepo = options.git.cachedBareRepoForUrl(url, /* fetchUrl= */ (String) null);
     FileUtil.deleteRecursively(cachedRepo.getGitDir());
-    cachedRepo.init(GitHashAlgorithm.SHA256);
+    cachedRepo.init(GitHashAlgorithm.SHA256, options.git.gitRefFormat);
 
     // Resolving cachedBareRepoForUrl using null fetchUrl
     GitRepository updatedCachedRepo =
@@ -318,7 +318,7 @@ public class GitOriginTest {
     String url = "file://" + remote.toFile().getAbsolutePath();
     GitRepository cachedRepo = options.git.cachedBareRepoForUrl(url);
     FileUtil.deleteRecursively(cachedRepo.getGitDir());
-    cachedRepo.init(GitHashAlgorithm.SHA256);
+    cachedRepo.init(GitHashAlgorithm.SHA256, options.git.gitRefFormat);
 
     // Resolving using an invalid fetchUrl that throws RepoException
     GitRepository updatedCachedRepo =
@@ -1453,7 +1453,7 @@ public class GitOriginTest {
 
   @Test
   public void testParseGithubHostName() throws Exception {
-    String customHost = "ghes.example.com";
+    String customHost = "ghop.example.com";
     String url = "https://" + customHost + "/my-org/my-repo";
     origin =
         skylark.eval(
@@ -1467,7 +1467,7 @@ public class GitOriginTest {
 
   @Test
   public void testCorrectGithubUrlGitOrigin() throws Exception {
-    String customHost = "ghes.example.com";
+    String customHost = "ghop.example.com";
     String orgAndRepoName = "my-org/my-repo";
     String url = "https://" + customHost + "/" + orgAndRepoName;
     GitOrigin origin =
@@ -1482,7 +1482,7 @@ public class GitOriginTest {
 
   @Test
   public void testInvalidGithubUrlGitOrigin() throws Exception {
-    String customHost = "ghes.example.com";
+    String customHost = "ghop.example.com";
     String orgAndRepoName = "my-org/my-repo";
     String url = "https://" + customHost + "/" + orgAndRepoName;
 
@@ -2257,6 +2257,24 @@ public class GitOriginTest {
     assertThat(actual.get("repoType")).containsExactly("GIT");
     assertThat(actual.get("partialFetch")).isEmpty();
     assertThat(actual.get("root")).isEmpty();
+  }
+
+  @Test
+  public void testDescribe_withTopLevelFiles_hasSpecificRootsDefined()
+      throws RepoException, ValidationException {
+    // TODO(b/548593484): Remove temporary feature flag.
+    options.general.setTemporaryFeaturesForTest(ImmutableMap.of("root_with_files", "true"));
+
+    Glob glob =
+        createGlob(
+            ImmutableList.of(
+                "foo/bar/file.txt", "dir/*", "recursive/**", "meta/dir/*.java", "license"));
+    ImmutableSetMultimap<String, String> actual = origin.describe(glob);
+
+    assertThat(actual.get("root")).isEmpty();
+    assertThat(actual.get("fileRoot")).containsExactly("foo/bar/file.txt", "license");
+    assertThat(actual.get("recursiveRoot")).containsExactly("recursive");
+    assertThat(actual.get("metaRoot")).containsExactly("dir", "meta/dir");
   }
 
   @Test

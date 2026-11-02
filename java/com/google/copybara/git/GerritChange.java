@@ -39,7 +39,6 @@ import com.google.re2j.Pattern;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
-import java.util.Optional;
 import java.util.TreeMap;
 import javax.annotation.Nullable;
 
@@ -175,15 +174,27 @@ class GerritChange {
    */
   GitRevision fetch(ImmutableMultimap<String, String> additionalLabels)
       throws RepoException, ValidationException {
+    return fetch(additionalLabels, /* recurseSubmodules= */ true);
+  }
+
+  /**
+   * Fetch the change from Gerrit
+   *
+   * @param additionalLabels additional labels to add to the GitRevision labels
+   * @param recurseSubmodules if true, recurse submodules
+   * @return The resolved and fetched SHA-1 of the change.
+   */
+  GitRevision fetch(ImmutableMultimap<String, String> additionalLabels, boolean recurseSubmodules)
+      throws RepoException, ValidationException {
     String metaRef = String.format("refs/changes/%02d/%d/meta", change % 100, change);
     repository.fetch(
         repoUrl,
-        /* prune= */ true,
-        /* force= */ true,
         ImmutableList.of(ref + ":refs/gerrit/" + ref, metaRef + ":refs/gerrit/" + metaRef),
-        false,
-        Optional.empty(),
-        false);
+        GitFetchOptions.builder()
+            .setPrune(true)
+            .setForce(true)
+            .setRecurseSubmodules(recurseSubmodules)
+            .build());
     GitRevision gitRevision = repository.resolveReference("refs/gerrit/" + ref);
     GitRevision metaRevision = repository.resolveReference("refs/gerrit/" + metaRef);
     String changeId = getChangeIdFromMeta(repository, metaRevision , metaRef);

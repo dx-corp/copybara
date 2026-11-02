@@ -172,12 +172,14 @@ public class Mirror implements Migration {
         new GitMirrorContext(
             action,
             new SkylarkConsole(generalOptions.console()),
+            generalOptions.cliLabels(),
             generalOptions.profiler(),
             sourceRefs,
             refspec,
             origin,
             destination,
             generalOptions.isForced(),
+            generalOptions.dryRunMode,
             repo,
             generalOptions.getDirFactory(),
             Dict.empty(),
@@ -285,12 +287,12 @@ public class Mirror implements Migration {
     try (ProfilerTask ignore1 = profiler.start("fetch")) {
       repo.fetch(
           origin,
-          /* prune= */ true,
-          /* force= */ true,
           fetchRefspecs,
-          partialFetch,
-          Optional.empty(),
-          false);
+          GitFetchOptions.builder()
+              .setPrune(true)
+              .setForce(true)
+              .setPartialFetch(partialFetch)
+              .build());
     }
 
     if (generalOptions.dryRunMode) {

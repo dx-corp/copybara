@@ -50,6 +50,7 @@ import com.google.copybara.exception.EmptyChangeException;
 import com.google.copybara.exception.NonReversibleValidationException;
 import com.google.copybara.exception.ValidationException;
 import com.google.copybara.folder.FolderModule;
+import com.google.copybara.jj.JjOptions;
 import com.google.copybara.revision.Revision;
 import com.google.copybara.templatetoken.Parser;
 import com.google.copybara.templatetoken.Token;
@@ -140,6 +141,7 @@ public class CoreModule implements LabelsAwareModule, StarlarkValue {
   private final GeneralOptions generalOptions;
   private final WorkflowOptions workflowOptions;
   private final DebugOptions debugOptions;
+  private final JjOptions jjOptions;
   private FolderModule folderModule;
   private ConfigFile mainConfigFile;
   private Supplier<ImmutableMap<String, ConfigFile>> allConfigFiles;
@@ -147,13 +149,38 @@ public class CoreModule implements LabelsAwareModule, StarlarkValue {
   private final HashMap<ConfigFile, HashSet<String>> transformNames = new HashMap<>();
   @Nullable private SkylarkConsole console;
 
+  /**
+   * Creates a {@code CoreModule} with default {@link JjOptions}.
+   *
+   * @deprecated Temporary overload kept so existing callers keep compiling while they migrate to
+   *     {@link #CoreModule(GeneralOptions, WorkflowOptions, DebugOptions, FolderModule,
+   *     JjOptions)}. It will be removed once all callers pass {@link JjOptions} explicitly.
+   */
+  @Deprecated
   public CoreModule(
-      GeneralOptions generalOptions, WorkflowOptions workflowOptions, DebugOptions debugOptions,
-  FolderModule folderModule) {
+      GeneralOptions generalOptions,
+      WorkflowOptions workflowOptions,
+      DebugOptions debugOptions,
+      FolderModule folderModule) {
+    this(
+        generalOptions,
+        workflowOptions,
+        debugOptions,
+        folderModule,
+        new JjOptions(Preconditions.checkNotNull(generalOptions)));
+  }
+
+  public CoreModule(
+      GeneralOptions generalOptions,
+      WorkflowOptions workflowOptions,
+      DebugOptions debugOptions,
+      FolderModule folderModule,
+      JjOptions jjOptions) {
     this.generalOptions = Preconditions.checkNotNull(generalOptions);
     this.workflowOptions = Preconditions.checkNotNull(workflowOptions);
     this.debugOptions = Preconditions.checkNotNull(debugOptions);
     this.folderModule = Preconditions.checkNotNull(folderModule);
+    this.jjOptions = Preconditions.checkNotNull(jjOptions);
   }
 
   @SuppressWarnings("unused")
@@ -2630,6 +2657,20 @@ public class CoreModule implements LabelsAwareModule, StarlarkValue {
             },
             defaultValue = "None",
             named = true,
+            positional = false),
+        @Param(
+            name = "workflow_name",
+            doc =
+                """
+                The authoritative workflow name to be used in the header of the consistency file.\
+                """,
+            allowedTypes = {
+              @ParamType(type = String.class),
+              @ParamType(type = NoneType.class),
+            },
+            documented = false,
+            defaultValue = "None",
+            named = true,
             positional = false)
       })
   public ConsistencyFileConfiguration consistencyFileConfig(
@@ -2637,7 +2678,8 @@ public class CoreModule implements LabelsAwareModule, StarlarkValue {
       boolean excludeBuildFiles,
       Object patchFilePathObj,
       Object patchPathPrefixToStripObj,
-      Object patchFileDescriptionObj)
+      Object patchFileDescriptionObj,
+      Object workflowNameObj)
       throws EvalException {
     try {
       checkCondition(
@@ -2649,13 +2691,19 @@ public class CoreModule implements LabelsAwareModule, StarlarkValue {
     String patchFilePath = convertFromNoneable(patchFilePathObj, null);
     String patchPathPrefixToStrip = convertFromNoneable(patchPathPrefixToStripObj, null);
     String patchFileDescription = convertFromNoneable(patchFileDescriptionObj, null);
+    String workflowName = convertFromNoneable(workflowNameObj, null);
     try {
       DiffUtil.validatePatchDescription(Optional.ofNullable(patchFileDescription));
     } catch (ValidationException e) {
       throw new EvalException(e.getMessage());
     }
     return ConsistencyFileConfiguration.create(
-        path, excludeBuildFiles, patchFilePath, patchPathPrefixToStrip, patchFileDescription);
+        path,
+        excludeBuildFiles,
+        workflowName,
+        patchFilePath,
+        patchPathPrefixToStrip,
+        patchFileDescription);
   }
 
   @SuppressWarnings("unused")
@@ -2777,6 +2825,7 @@ public class CoreModule implements LabelsAwareModule, StarlarkValue {
             ConsistencyFileConfiguration.create(
                 /* path= */ "do-not-edit.bara.consistency",
                 /* excludeBuildFiles= */ false,
+                /* workflow= */ null,
                 /* patchFilePath= */ null,
                 /* patchPathPrefixToStrip= */ null,
                 /* patchFileDescription= */ null);
@@ -2800,6 +2849,7 @@ public class CoreModule implements LabelsAwareModule, StarlarkValue {
           ConsistencyFileConfiguration.create(
               consistencyFilePath,
               /* excludeBuildFiles= */ false,
+              /* workflow= */ null,
               /* patchFilePath= */ null,
               /* patchPathPrefixToStrip= */ null,
               /* patchFileDescription= */ null);
