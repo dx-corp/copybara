@@ -49,6 +49,7 @@ import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.ImmutableSetMultimap;
 import com.google.common.collect.ImmutableSetMultimap.Builder;
+import com.google.copybara.DestinationInfo;
 import com.google.copybara.EndpointProvider;
 import com.google.copybara.GeneralOptions;
 import com.google.copybara.LazyResourceLoader;
@@ -480,7 +481,23 @@ public class GitModule implements LabelsAwareModule, StarlarkValue {
                     + " labels from the TransformResult are available, but destination labels might"
                     + " not. It will use the first label value if multiple are defined. See"
                     + " metadata.replace_message for semantics",
-            defaultValue = "\"${MERGE_MSG}\"")
+            defaultValue = "\"${MERGE_MSG}\""),
+        @Param(
+            name = "allow_protocol_ref",
+            named = true,
+            doc =
+                "If true, allow protocol markers (://) in generic git integrate references."
+                    + " Enabling this might be required for non-GitHub repos when no remote is"
+                    + " configured.",
+            defaultValue = "False"),
+        @Param(
+            name = "allowed_ref_prefixes",
+            allowedTypes = {@ParamType(type = Sequence.class, generic1 = String.class)},
+            named = true,
+            doc =
+                "List of repository URL prefixes that git.integrate is allowed to fetch from. If"
+                    + " empty, only the destination repository URL is allowed.",
+            defaultValue = "[]")
       })
   @Example(
       title = "Integrate changes from a review url",
@@ -522,14 +539,18 @@ public class GitModule implements LabelsAwareModule, StarlarkValue {
       String strategy,
       Boolean ignoreErrors,
       Boolean allowUnrelatedHistory,
-      String mergeCommitMessage)
+      String mergeCommitMessage,
+      Boolean allowProtocolRef,
+      Sequence<?> allowedRefPrefixes)
       throws EvalException {
     return new GitIntegrateChanges(
         label,
         stringToEnum("strategy", strategy, Strategy.class),
         ignoreErrors,
         allowUnrelatedHistory != null && allowUnrelatedHistory,
-        new LabelTemplate(mergeCommitMessage));
+        new LabelTemplate(mergeCommitMessage),
+        allowProtocolRef != null && allowProtocolRef,
+        Sequence.cast(allowedRefPrefixes, String.class, "allowed_ref_prefixes"));
   }
 
   @SuppressWarnings("unused")
@@ -1867,11 +1888,21 @@ public class GitModule implements LabelsAwareModule, StarlarkValue {
         options.get(GitOptions.class),
         generalOptions,
         new DefaultWriteHook(),
+        getDestinationInfo(),
         Starlark.isNullOrNone(integrates)
             ? defaultGitIntegrate
             : Sequence.cast(integrates, GitIntegrateChanges.class, "integrates"),
         maybeChecker,
         credentialHandler);
+  }
+
+  /**
+   * Returns the {@link DestinationInfo} to attach to git destinations, or null if not supported.
+   * Subclasses can override this to provide a custom implementation.
+   */
+  @Nullable
+  protected DestinationInfo getDestinationInfo() {
+    return null;
   }
 
   @SuppressWarnings("unused")
@@ -2139,6 +2170,7 @@ public class GitModule implements LabelsAwareModule, StarlarkValue {
             gitHubHost,
             credentialHandler,
             pushToFork),
+        getDestinationInfo(),
         Starlark.isNullOrNone(integrates)
             ? defaultGitIntegrate
             : Sequence.cast(integrates, GitIntegrateChanges.class, "integrates"),
@@ -2454,7 +2486,8 @@ public class GitModule implements LabelsAwareModule, StarlarkValue {
         gitHubHost,
         primaryBranchMigrationMode,
         checkerObj,
-        credentialHandler);
+        credentialHandler,
+        getDestinationInfo());
   }
 
   private ImmutableSetMultimap<String, Conclusion> convertSlugToConclusion(
@@ -2675,7 +2708,17 @@ public class GitModule implements LabelsAwareModule, StarlarkValue {
             defaultValue = "None",
             named = true,
             positional = false,
-            doc = CREDENTIAL_DOC)
+            doc = CREDENTIAL_DOC),
+        @Param(
+            name = "allow_empty_diff_patchset_check_labels",
+            named = true,
+            defaultValue = "[]",
+            doc =
+                "When `allow_empty_diff_patchset` is False, allow uploading a new PatchSet"
+                    + " even when the diff is the same if any of the specified Gerrit labels"
+                    + " on the existing change has a negative vote (for example, `['Verified']`"
+                    + " to allow retrying failed CI runs).",
+            positional = false)
       },
       useStarlarkThread = true)
   @UsesFlags({GitDestinationOptions.class, GerritOptions.class})
@@ -2699,6 +2742,7 @@ public class GitModule implements LabelsAwareModule, StarlarkValue {
       Boolean primaryBranchMigrationMode,
       Object checker,
       @Nullable Object credentials,
+      Sequence<?> allowEmptyPatchSetCheckLabelsParam, // <String>
       StarlarkThread thread)
       throws EvalException {
     checkNotEmpty(url, "url");
@@ -2706,6 +2750,9 @@ public class GitModule implements LabelsAwareModule, StarlarkValue {
       Preconditions.checkArgument(submit, "Only set gerrit_submit if submit is true");
     }
 
+    List<String> allowEmptyPatchSetCheckLabels =
+        SkylarkUtil.convertStringList(
+            allowEmptyPatchSetCheckLabelsParam, "allow_empty_diff_patchset_check_labels");
     List<String> newReviewers = SkylarkUtil.convertStringList(reviewers, "reviewers");
     List<String> cc = SkylarkUtil.convertStringList(ccParam, "cc");
     List<String> labels = SkylarkUtil.convertStringList(labelsParam, "labels");
@@ -2729,6 +2776,7 @@ public class GitModule implements LabelsAwareModule, StarlarkValue {
     CredentialFileHandler credentialHandler = getCredentialHandler(url, credentials);
     return GerritDestination.newGerritDestination(
         options,
+        getDestinationInfo(),
         fixHttp(url, thread.getCallerLocation()),
         checkNotEmpty(firstNotNull(options.get(GitDestinationOptions.class).fetch, fetch), "fetch"),
         checkNotEmpty(
@@ -2742,6 +2790,7 @@ public class GitModule implements LabelsAwareModule, StarlarkValue {
         notifyOption,
         stringToEnum("change_id_policy", changeIdPolicy, ChangeIdPolicy.class),
         allowEmptyPatchSet,
+        allowEmptyPatchSetCheckLabels,
         newReviewers,
         cc,
         labels,
@@ -3055,6 +3104,7 @@ public class GitModule implements LabelsAwareModule, StarlarkValue {
                 ? defaultGitIntegrate
                 : Sequence.cast(integrates, GitIntegrateChanges.class, "integrates"))
         .setChecker(convertToOptional(checker))
+        .setDestinationInfo(getDestinationInfo())
         .build()
         .createDestination();
   }

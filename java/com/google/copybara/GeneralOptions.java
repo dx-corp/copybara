@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016 Google Inc.
+ * Copyright (C) 2016 Google LLC
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -442,8 +442,8 @@ public final class GeneralOptions implements Option {
               + " names uppercased and prefixed with "
               + CLI_FLAG_PREFIX
               + " to avoid name clashes with existing labels. I.e. `--labels=label1:value1` will"
-              + " define a label FLAG_LABEL1Format: --labels=flag1:value1,flag2:value2 Or: --labels"
-              + " flag1:value1,flag2:value2 ",
+              + " define a label FLAG_LABEL1. Format: --labels=flag1:value1,flag2:value2 Or:"
+              + " --labels flag1:value1,flag2:value2",
       converter = MapConverter.class)
   ImmutableMap<String, String> labels = ImmutableMap.of();
 
@@ -587,5 +587,19 @@ public final class GeneralOptions implements Option {
 
   public boolean allowEmptyDiff(boolean configAllowEmptyDiff) {
     return this.allowEmptyDiff == null ? configAllowEmptyDiff : this.allowEmptyDiff;
+  }
+
+  @Parameter(
+      names = "--load-from-stdin",
+      description = "Read the configuration file from stdin instead of a file.")
+  boolean loadFromStdin = false;
+
+  public boolean isLoadFromStdin() {
+    return loadFromStdin;
+  }
+
+  @VisibleForTesting
+  public void setLoadFromStdinForTest(boolean loadFromStdin) {
+    this.loadFromStdin = loadFromStdin;
   }
 }
