@@ -49,6 +49,7 @@ import com.google.copybara.git.GitRevision.GitHashAlgorithm;
 import com.google.copybara.testing.OptionsBuilder;
 import com.google.copybara.testing.git.GitTestUtil;
 import com.google.copybara.util.CommandOutput;
+import com.google.copybara.util.CommandOutputWithStatus;
 import com.google.copybara.util.Glob;
 import com.google.testing.junit.testparameterinjector.TestParameter;
 import com.google.testing.junit.testparameterinjector.TestParameterInjector;
@@ -64,6 +65,7 @@ import java.time.ZonedDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -785,12 +787,8 @@ public class GitRepositoryTest {
     FetchResult result =
         dest.fetch(
             fetchUrl,
-            /* prune= */ true,
-            /* force= */ true,
             ImmutableList.of("refs/*:refs/*"),
-            false,
-            Optional.empty(),
-            false);
+            GitFetchOptions.builder().setPrune(true).setForce(true).build());
 
     assertThat(result.getDeleted()).isEmpty();
     assertThat(result.getUpdated()).isEmpty();
@@ -806,12 +804,8 @@ public class GitRepositoryTest {
     result =
         dest.fetch(
             fetchUrl,
-            /* prune= */ true,
-            /* force= */ true,
             ImmutableList.of("refs/*:refs/*"),
-            false,
-            Optional.empty(),
-            false);
+            GitFetchOptions.builder().setPrune(true).setForce(true).build());
 
     assertThat(result.getDeleted().keySet()).containsExactly("refs/heads/deleted");
     assertThat(result.getUpdated().keySet()).containsExactly("refs/heads/" + defaultBranch);
@@ -931,12 +925,8 @@ public class GitRepositoryTest {
 
     local.fetch(
         fetchUrl,
-        /* prune= */ true,
-        /* force= */ true,
         ImmutableList.of("refs/*:refs/*"),
-        true,
-        Optional.empty(),
-        false);
+        GitFetchOptions.builder().setPrune(true).setForce(true).setPartialFetch(true).build());
     CommandOutput commandOutput =
         local.simpleCommand("config", "--get-regexp", "remote..*.partialclonefilter");
     assertThat(commandOutput.getStdout()).contains("blob:none");
@@ -982,12 +972,8 @@ public class GitRepositoryTest {
 
     local.fetch(
         fetchUrl,
-        /* prune= */ true,
-        /* force= */ true,
         ImmutableList.of("refs/*:refs/*"),
-        false,
-        Optional.empty(),
-        false);
+        GitFetchOptions.builder().setPrune(true).setForce(true).build());
     local
         .withWorkTree(localWorkdir)
         .forceCheckout(defaultBranch, ImmutableSet.of("a"), DEFAULT_TIMEOUT);
@@ -1023,12 +1009,8 @@ public class GitRepositoryTest {
     String fetchUrl = "file://" + repository.getGitDir();
     local.fetch(
         fetchUrl,
-        /* prune= */ true,
-        /* force= */ true,
         ImmutableList.of("refs/*:refs/*"),
-        false,
-        Optional.of(2),
-        false);
+        GitFetchOptions.builder().setPrune(true).setForce(true).setDepth(2).build());
 
     assertThat(local.simpleCommand("rev-list", "--count", "HEAD").getStdout().trim())
         .isEqualTo("2");
@@ -1054,16 +1036,11 @@ public class GitRepositoryTest {
 
           @Override
           public FetchResult fetch(
-              String url,
-              boolean prune,
-              boolean force,
-              Iterable<String> refspecs,
-              boolean partialFetch,
-              Optional<Integer> depth,
-              boolean tags)
+              String url, Iterable<String> refspecs, GitFetchOptions options)
               throws RepoException, ValidationException {
             requestedFetches.add(refspecs);
-            return super.fetch(url, prune, force, refspecs, partialFetch, Optional.empty(), tags);
+            return super.fetch(
+                url, refspecs, options.toBuilder().setDepth(Optional.empty()).build());
           }
         }.init(repoFormat);
 
@@ -1109,16 +1086,11 @@ public class GitRepositoryTest {
 
           @Override
           public FetchResult fetch(
-              String url,
-              boolean prune,
-              boolean force,
-              Iterable<String> refspecs,
-              boolean partialFetch,
-              Optional<Integer> depth,
-              boolean tags)
+              String url, Iterable<String> refspecs, GitFetchOptions options)
               throws RepoException, ValidationException {
             requestedFetches.add(refspecs);
-            return super.fetch(url, prune, force, refspecs, partialFetch, Optional.empty(), tags);
+            return super.fetch(
+                url, refspecs, options.toBuilder().setDepth(Optional.empty()).build());
           }
         }.init(repoFormat);
 
@@ -1159,16 +1131,11 @@ public class GitRepositoryTest {
 
           @Override
           public FetchResult fetch(
-              String url,
-              boolean prune,
-              boolean force,
-              Iterable<String> refspecs,
-              boolean partialFetch,
-              Optional<Integer> depth,
-              boolean tags)
+              String url, Iterable<String> refspecs, GitFetchOptions options)
               throws RepoException, ValidationException {
             requestedFetches.add(refspecs);
-            return super.fetch(url, prune, force, refspecs, partialFetch, Optional.empty(), tags);
+            return super.fetch(
+                url, refspecs, options.toBuilder().setDepth(Optional.empty()).build());
           }
         }.init(repoFormat);
 
@@ -1198,12 +1165,8 @@ public class GitRepositoryTest {
         () ->
             dest.fetch(
                 fetchUrl,
-                /* prune= */ true,
-                /* force= */ true,
                 ImmutableList.of("refs/*:refs/*"),
-                false,
-                Optional.empty(),
-                false));
+                GitFetchOptions.builder().setPrune(true).setForce(true).build()));
   }
 
   @Test
@@ -2168,6 +2131,276 @@ public class GitRepositoryTest {
     assertThat(newRepo.isReftable()).isFalse();
     assertThat(Files.exists(newGitDir.resolve("refs"))).isTrue();
     assertThat(Files.exists(newGitDir.resolve("reftable"))).isFalse();
+  }
+
+  @Test
+  public void gitFetchOptions_defaults() {
+    GitFetchOptions defaults = GitFetchOptions.DEFAULT;
+    assertThat(defaults.prune()).isFalse();
+    assertThat(defaults.force()).isFalse();
+    assertThat(defaults.partialFetch()).isFalse();
+    assertThat(defaults.depth()).isEmpty();
+    assertThat(defaults.tags()).isFalse();
+    assertThat(defaults.recurseSubmodules()).isTrue();
+    assertThat(GitFetchOptions.builder().build()).isEqualTo(defaults);
+  }
+
+  @Test
+  public void gitFetchOptions_builderAndToBuilder() {
+    GitFetchOptions options =
+        GitFetchOptions.builder()
+            .setPrune(true)
+            .setForce(true)
+            .setPartialFetch(true)
+            .setDepth(5)
+            .setTags(true)
+            .setRecurseSubmodules(false)
+            .build();
+    assertThat(options.prune()).isTrue();
+    assertThat(options.force()).isTrue();
+    assertThat(options.partialFetch()).isTrue();
+    assertThat(options.depth()).hasValue(5);
+    assertThat(options.tags()).isTrue();
+    assertThat(options.recurseSubmodules()).isFalse();
+
+    GitFetchOptions modified =
+        options.toBuilder().setDepth(Optional.empty()).setRecurseSubmodules(true).build();
+    assertThat(modified.prune()).isTrue();
+    assertThat(modified.force()).isTrue();
+    assertThat(modified.partialFetch()).isTrue();
+    assertThat(modified.depth()).isEmpty();
+    assertThat(modified.tags()).isTrue();
+    assertThat(modified.recurseSubmodules()).isTrue();
+  }
+
+  @Test
+  public void gitFetchOptions_nullDepthThrowsNpe() {
+    assertThrows(
+        NullPointerException.class,
+        () -> new GitFetchOptions(false, false, false, null, false, true));
+    assertThrows(
+        NullPointerException.class,
+        () -> GitFetchOptions.builder().setDepth((Optional<Integer>) null).build());
+  }
+
+  @Test
+  public void fetch_withGitFetchOptionsRecurseSubmodulesFalse_passesNoRecurseSubmodulesFlag()
+      throws Exception {
+    List<ImmutableList<String>> gitCommands = new ArrayList<>();
+    GitRepository dest =
+        new GitRepository(
+            Files.createTempDirectory("destDir"),
+            /* workTree= */ null,
+            /* verbose= */ true,
+            getGitEnv(),
+            DEFAULT_TIMEOUT,
+            /* noVerify= */ false,
+            /* pushOptionsValidator= */ new GitRepository.PushOptionsValidator(Optional.empty()),
+            /* gitRepositoryHook= */ null) {
+          @Override
+          protected CommandOutputWithStatus gitAllowNonZeroExit(
+              byte[] stdin, Iterable<String> params, Duration defaultTimeout, int maxLogLines)
+              throws RepoException {
+            gitCommands.add(ImmutableList.copyOf(params));
+            return super.gitAllowNonZeroExit(stdin, params, defaultTimeout, maxLogLines);
+          }
+        }.init(repoFormat);
+
+    Files.write(workdir.resolve("foo.txt"), "aaa".getBytes(UTF_8));
+    repository.add().files("foo.txt").run();
+    repository.simpleCommand("commit", "foo.txt", "-m", "message 1");
+
+    FetchResult result =
+        dest.fetch(
+            "file://" + repository.getGitDir(),
+            ImmutableList.of("refs/heads/*:refs/heads/*"),
+            GitFetchOptions.builder()
+                .setPrune(true)
+                .setForce(true)
+                .setRecurseSubmodules(false)
+                .build());
+
+    assertThat(result.getInserted().keySet()).containsExactly("refs/heads/" + defaultBranch);
+    assertThat(gitCommands.stream().anyMatch(cmd -> cmd.contains("--no-recurse-submodules")))
+        .isTrue();
+  }
+
+  private record TestCredHarness(
+      Path credentialsFile,
+      String expectedHelper,
+      Path recordedHelper,
+      Path recordedFollowRedirects,
+      Path recordedPassword,
+      Map<String, String> env,
+      GitEnvironment gitEnv) {}
+
+  private TestCredHarness createTestCredHarness() throws Exception {
+    Path credentialsFile = Files.createTempFile("credentials", "test");
+    Files.writeString(credentialsFile, "https://user:secret@example.com");
+    String expectedHelper = "store --file=" + credentialsFile;
+
+    Path remoteGitDir = Files.createTempDirectory("remote-sha256-git");
+    GitRepository remoteRepo =
+        GitRepository.newBareRepo(
+            remoteGitDir, getGitEnv(), /* verbose= */ true, DEFAULT_TIMEOUT, /* noVerify= */ false);
+    remoteRepo.init(GitHashAlgorithm.SHA256);
+
+    Path binDir = Files.createTempDirectory("git-remote-bin");
+    Path recordedHelper = Files.createTempFile("recorded-helper", ".txt");
+    Path recordedFollowRedirects = Files.createTempFile("recorded-redirects", ".txt");
+    Path recordedPassword = Files.createTempFile("recorded-password", ".txt");
+    Path helperScript = binDir.resolve("git-remote-testcred");
+    Files.writeString(
+        helperScript,
+        "#!/bin/sh\n"
+            + "git config --get credential.helper > \""
+            + recordedHelper
+            + "\"\n"
+            + "git config --get http.followRedirects > \""
+            + recordedFollowRedirects
+            + "\"\n"
+            + "printf 'protocol=https\\nhost=example.com\\n\\n'"
+            + " | git credential fill | sed -n 's/^password=//p' > \""
+            + recordedPassword
+            + "\"\n"
+            + "exec git-remote-ext \"$1\" \"git %s "
+            + remoteGitDir.toAbsolutePath()
+            + "\"\n");
+    helperScript.toFile().setExecutable(true);
+
+    Map<String, String> env = new HashMap<>(getGitEnv().getEnvironment());
+    env.put("PATH", binDir + ":" + env.getOrDefault("PATH", ""));
+    return new TestCredHarness(
+        credentialsFile,
+        expectedHelper,
+        recordedHelper,
+        recordedFollowRedirects,
+        recordedPassword,
+        env,
+        new GitEnvironment(env));
+  }
+
+  @Test
+  public void initRepo_withCredentialHelperStoreFile_configuresCredentialsBeforeRemoteFormatCheck()
+      throws Exception {
+    TestCredHarness harness = createTestCredHarness();
+
+    OptionsBuilder optionsBuilder = new OptionsBuilder();
+    optionsBuilder.setEnvironment(harness.env());
+    optionsBuilder.git.credentialHelperStorePath = harness.credentialsFile().toString();
+    optionsBuilder.git.httpFollowRedirects = "initial";
+
+    Path localGitDir = Files.createTempDirectory("local-cred-git");
+    Path detachedWorkTree = Files.createTempDirectory("detached-worktree");
+    GitRepository localRepo =
+        GitRepository.newBareRepo(
+                localGitDir,
+                harness.gitEnv(),
+                /* verbose= */ true,
+                DEFAULT_TIMEOUT,
+                /* noVerify= */ false)
+            .withWorkTree(detachedWorkTree);
+
+    // Pre-initialize with SHA-1 so initRepo has to probe the SHA-256 remote, wipe, and re-init.
+    localRepo.init(GitHashAlgorithm.SHA1);
+    optionsBuilder.git.initRepo(localRepo, "testcred::https://example.com/repo.git");
+
+    assertThat(Files.readString(harness.recordedHelper()).trim())
+        .isEqualTo(harness.expectedHelper());
+    assertThat(Files.readString(harness.recordedFollowRedirects()).trim()).isEqualTo("initial");
+    assertThat(Files.readString(harness.recordedPassword()).trim()).isEqualTo("secret");
+    // Even after wiping and re-initializing for SHA-256, credential.helper and http.followRedirects
+    // remain configured.
+    assertThat(localRepo.simpleCommand("config", "extensions.objectformat").getStdout().trim())
+        .isEqualTo("sha256");
+    assertThat(localRepo.simpleCommand("config", "--local", "credential.helper").getStdout().trim())
+        .isEqualTo(harness.expectedHelper());
+    assertThat(
+            localRepo.simpleCommand("config", "--local", "http.followRedirects").getStdout().trim())
+        .isEqualTo("initial");
+    assertThat(localRepo.simpleCommand("config", "--local", "fetch.prune").getStdout().trim())
+        .isEqualTo("false");
+  }
+
+  @Test
+  public void getRemoteObjectFormat_uninitializedRepoWithDetachedWorkTree_passesConfigFlags()
+      throws Exception {
+    TestCredHarness harness = createTestCredHarness();
+
+    Path localGitDir = Files.createTempDirectory("local-uninit-cred-git");
+    Path detachedWorkTree = Files.createTempDirectory("detached-worktree");
+    GitRepository localRepo =
+        GitRepository.newBareRepo(
+                localGitDir,
+                harness.gitEnv(),
+                /* verbose= */ true,
+                DEFAULT_TIMEOUT,
+                /* noVerify= */ false)
+            .withCredentialHelper(harness.expectedHelper())
+            .withHttpFollowRedirectsOption("always")
+            .withWorkTree(detachedWorkTree);
+
+    assertThat(localRepo.isInitialized()).isFalse();
+
+    GitHashAlgorithm format =
+        localRepo.getRemoteObjectFormat("testcred::https://example.com/repo.git");
+    assertThat(format).isEqualTo(GitHashAlgorithm.SHA256);
+    assertThat(Files.readString(harness.recordedHelper()).trim())
+        .isEqualTo(harness.expectedHelper());
+    assertThat(Files.readString(harness.recordedFollowRedirects()).trim()).isEqualTo("always");
+    assertThat(Files.readString(harness.recordedPassword()).trim()).isEqualTo("secret");
+
+    // Initializing the repo afterwards preserves both options across SHA-256 and reftable init.
+    localRepo.init("testcred::https://example.com/repo.git", GitRefFormat.REFTABLE);
+    assertThat(localRepo.isInitialized()).isTrue();
+    assertThat(localRepo.isReftable()).isTrue();
+    assertThat(localRepo.simpleCommand("config", "extensions.objectformat").getStdout().trim())
+        .isEqualTo("sha256");
+    assertThat(localRepo.simpleCommand("config", "--local", "credential.helper").getStdout().trim())
+        .isEqualTo(harness.expectedHelper());
+    assertThat(
+            localRepo.simpleCommand("config", "--local", "http.followRedirects").getStdout().trim())
+        .isEqualTo("always");
+  }
+
+  @Test
+  public void getRemoteObjectFormat_invalidUrl_throwsRepoException() throws Exception {
+    Path localGitDir = Files.createTempDirectory("local-invalid-url-git");
+    GitRepository localRepo =
+        GitRepository.newBareRepo(
+            localGitDir, getGitEnv(), /* verbose= */ true, DEFAULT_TIMEOUT, /* noVerify= */ false);
+
+    RepoException httpThrown =
+        assertThrows(
+            RepoException.class,
+            () -> localRepo.getRemoteObjectFormat("http://example.com/repo.git"));
+    assertThat(httpThrown).hasMessageThat().contains("Invalid url: http://example.com/repo.git");
+
+    RepoException dashThrown =
+        assertThrows(
+            RepoException.class, () -> localRepo.getRemoteObjectFormat("--upload-pack=evil"));
+    assertThat(dashThrown).hasMessageThat().contains("URL '--upload-pack=evil' is not valid");
+  }
+
+  @Test
+  public void initRepo_withNoCredentialHelperStore_stillSetsHttpFollowRedirectsAndFetchPrune()
+      throws Exception {
+    OptionsBuilder optionsBuilder = new OptionsBuilder();
+    optionsBuilder.git.noCredentialHelperStore = true;
+    optionsBuilder.git.httpFollowRedirects = "initial";
+
+    Path localGitDir = Files.createTempDirectory("local-nocred-git");
+    GitRepository localRepo =
+        GitRepository.newBareRepo(
+            localGitDir, getGitEnv(), /* verbose= */ true, DEFAULT_TIMEOUT, /* noVerify= */ false);
+
+    optionsBuilder.git.initRepo(localRepo, /* fetchUrl= */ null);
+
+    assertThat(
+            localRepo.simpleCommand("config", "--local", "http.followRedirects").getStdout().trim())
+        .isEqualTo("initial");
+    assertThat(localRepo.simpleCommand("config", "--local", "fetch.prune").getStdout().trim())
+        .isEqualTo("false");
   }
 
   private GitRepository mockRepository(Path gitDir, Path workTree) throws RepoException {

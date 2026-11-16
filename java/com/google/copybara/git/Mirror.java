@@ -172,12 +172,14 @@ public class Mirror implements Migration {
         new GitMirrorContext(
             action,
             new SkylarkConsole(generalOptions.console()),
+            generalOptions.cliLabels(),
             generalOptions.profiler(),
             sourceRefs,
             refspec,
             origin,
             destination,
             generalOptions.isForced(),
+            generalOptions.dryRunMode,
             repo,
             generalOptions.getDirFactory(),
             Dict.empty(),
@@ -229,8 +231,10 @@ public class Mirror implements Migration {
       ImmutableList<String> destRefPatterns =
           refspec.stream().map(Refspec::getDestination).collect(toImmutableList());
 
+      generalOptions.console().progressFmt("Checking origin refs for %s", origin);
       ImmutableMap<String, String> originRefs =
           ImmutableMap.copyOf(repo.lsRemote(origin, originRefPatterns, LS_REMOTE_FLAGS));
+      generalOptions.console().progressFmt("Checking destination refs for %s", destination);
       ImmutableMap<String, String> destRefs =
           ImmutableMap.copyOf(repo.lsRemote(destination, destRefPatterns, LS_REMOTE_FLAGS));
 
@@ -285,12 +289,12 @@ public class Mirror implements Migration {
     try (ProfilerTask ignore1 = profiler.start("fetch")) {
       repo.fetch(
           origin,
-          /* prune= */ true,
-          /* force= */ true,
           fetchRefspecs,
-          partialFetch,
-          Optional.empty(),
-          false);
+          GitFetchOptions.builder()
+              .setPrune(true)
+              .setForce(true)
+              .setPartialFetch(partialFetch)
+              .build());
     }
 
     if (generalOptions.dryRunMode) {

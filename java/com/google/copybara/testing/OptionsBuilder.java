@@ -47,7 +47,9 @@ import com.google.copybara.git.gitlab.GitLabOptions;
 import com.google.copybara.hg.HgOptions;
 import com.google.copybara.hg.HgOriginOptions;
 import com.google.copybara.http.HttpOptions;
+import com.google.copybara.jj.JjOptions;
 import com.google.copybara.onboard.GeneratorOptions;
+import com.google.copybara.onboard.ai.AiOnboardOptions;
 import com.google.copybara.regenerate.RegenerateOptions;
 import com.google.copybara.remotefile.RemoteFileOptions;
 import com.google.copybara.testing.TestingModule.TestingOptions;
@@ -55,6 +57,7 @@ import com.google.copybara.transform.debug.DebugOptions;
 import com.google.copybara.transform.patch.PatchingOptions;
 import com.google.copybara.util.console.Console;
 import com.google.copybara.util.console.testing.TestingConsole;
+import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import java.io.IOException;
 import java.nio.file.FileSystems;
 import java.util.HashMap;
@@ -90,6 +93,7 @@ public class OptionsBuilder {
   public RemoteFileOptions remoteFile = new RemoteFileOptions();
   public BuildifierOptions buildifier = new BuildifierOptions();
   public GeneratorOptions generator = new GeneratorOptions();
+  public AiOnboardOptions aiOnboard = new AiOnboardOptions();
   public CredentialOptions credentialOptions = new CredentialOptions();
 
   public String buildozerBin = null;
@@ -125,6 +129,8 @@ public class OptionsBuilder {
 
   public HgOptions hg = new HgOptions(general);
   public HgOriginOptions hgOrigin = new HgOriginOptions();
+
+  public JjOptions jj = new JjOptions(general);
 
   public TestingOptions testingOptions = new TestingOptions();
 
@@ -184,6 +190,12 @@ public class OptionsBuilder {
     return this;
   }
 
+  @CanIgnoreReturnValue
+  public final OptionsBuilder setLoadFromStdin(boolean loadFromStdin) {
+    general.setLoadFromStdinForTest(loadFromStdin);
+    return this;
+  }
+
   /**
    * Returns all options to include in the built {@link Options} instance. This can be overridden by
    * child classes, in which case it should also include the superclass' instances.
@@ -209,6 +221,7 @@ public class OptionsBuilder {
         gitLabOptions,
         hg,
         hgOrigin,
+        jj,
         workflowOptions,
         testingOptions,
         patch,
@@ -217,6 +230,7 @@ public class OptionsBuilder {
         buildifier,
         buildozer,
         generator,
+        aiOnboard,
         http,
         regenerateOptions,
         credentialOptions);

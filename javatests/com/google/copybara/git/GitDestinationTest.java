@@ -39,6 +39,7 @@ import com.google.copybara.ChangeMessage;
 import com.google.copybara.ChangeVisitable.VisitResult;
 import com.google.copybara.Destination.DestinationStatus;
 import com.google.copybara.Destination.Writer;
+import com.google.copybara.DestinationInfo;
 import com.google.copybara.Origin.Baseline;
 import com.google.copybara.TransformResult;
 import com.google.copybara.WriterContext;
@@ -84,7 +85,6 @@ import java.util.Map;
 import java.util.Optional;
 import javax.annotation.Nullable;
 import net.starlark.java.eval.StarlarkList;
-import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -351,7 +351,7 @@ public class GitDestinationTest {
 
   @Test
   public void parseGithubHostName() throws Exception {
-    String customHost = "ghes.example.com";
+    String customHost = "ghop.example.com";
     String orgAndRepoName = "my-org/my-repo";
     String url = "https://" + customHost + "/" + orgAndRepoName;
     GitDestination destination =
@@ -2600,4 +2600,12 @@ public class GitDestinationTest {
       .isEqualTo(secondCommit.commit().getHash());
   }
 
+  @Test
+  public void testGetDestinationInfo_isNullByDefault() throws Exception {
+    Writer<GitRevision> writer = newWriter();
+
+    DestinationInfo destinationInfo = writer.getDestinationInfo();
+
+    assertThat(destinationInfo).isNull();
+  }
 }

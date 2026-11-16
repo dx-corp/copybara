@@ -73,6 +73,7 @@ public class GitMirrorContext extends ActionContext<GitMirrorContext> implements
   private static final FluentLogger logger = FluentLogger.forEnclosingClass();
 
   private boolean force;
+  private final boolean dryRun;
   private GitRepository repo;
   private DirFactory dirFactory;
   private List<String> sourceRefs;
@@ -87,24 +88,27 @@ public class GitMirrorContext extends ActionContext<GitMirrorContext> implements
   GitMirrorContext(
       Action currentAction,
       SkylarkConsole console,
+      ImmutableMap<String, String> labels,
       Profiler profiler,
       List<String> sourceRefs,
       List<Refspec> refspecs,
       String originUrl,
       String destinationUrl,
       boolean force,
+      boolean dryRun,
       GitRepository repo,
       DirFactory dirFactory,
       Dict<?, ?> params,
       GitOptions gitOptions,
       LazyResourceLoader<EndpointProvider<?>> originApiEndpointProvider,
       LazyResourceLoader<EndpointProvider<?>> destinationApiEndpointProvider) {
-    super(currentAction, console, ImmutableMap.of(), params);
+    super(currentAction, console, labels, params);
     this.sourceRefs = sourceRefs;
     this.refspecs = checkNotNull(refspecs);
     this.originUrl = originUrl;
     this.destinationUrl = destinationUrl;
     this.force = force;
+    this.dryRun = dryRun;
     this.repo = repo;
     this.dirFactory = dirFactory;
     this.gitOptions = gitOptions;
@@ -118,12 +122,14 @@ public class GitMirrorContext extends ActionContext<GitMirrorContext> implements
     return new GitMirrorContext(
         action,
         console,
+        labels,
         profiler,
         sourceRefs,
         refspecs,
         originUrl,
         destinationUrl,
         force,
+        dryRun,
         repo,
         dirFactory,
         params,
@@ -213,12 +219,13 @@ public class GitMirrorContext extends ActionContext<GitMirrorContext> implements
     try (ProfilerTask ignored = profiler.start("origin_fetch")) {
       repo.fetch(
           originUrl,
-          prune,
-          force,
           refspecsToFetch.stream().map(Refspec::toString).collect(toImmutableList()),
-          partialFetch,
-          depthOptional,
-          false);
+          GitFetchOptions.builder()
+              .setPrune(prune)
+              .setForce(force)
+              .setPartialFetch(partialFetch)
+              .setDepth(depthOptional)
+              .build());
     } catch (CannotResolveRevisionException e) {
       console.warnFmt("Failed to complete origin_fetch with error '%s'", e.getMessage());
       return false;
@@ -271,12 +278,13 @@ public class GitMirrorContext extends ActionContext<GitMirrorContext> implements
     try {
       repo.fetch(
           destinationUrl,
-          prune,
-          force,
           refspecsToFetch.stream().map(Refspec::toString).collect(toImmutableList()),
-          partialFetch,
-          depthOptional,
-          false);
+          GitFetchOptions.builder()
+              .setPrune(prune)
+              .setForce(force)
+              .setPartialFetch(partialFetch)
+              .setDepth(depthOptional)
+              .build());
     } catch (CannotResolveRevisionException e) {
       return false;
     }
@@ -346,6 +354,10 @@ public class GitMirrorContext extends ActionContext<GitMirrorContext> implements
             .addAll(gitOptions.gitPushOptions)
             .build();
     validatePush(refspecsToPush, refspecs, true);
+    if (dryRun) {
+      console.infoFmt("Dry run: skipping push of %s to %s", refspecsToPush, destinationUrl);
+      return;
+    }
     try (ProfilerTask ignored = profiler.start("destination_push")) {
       repo.runPush(
           repo.push()

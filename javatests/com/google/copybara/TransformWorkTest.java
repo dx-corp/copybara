@@ -27,6 +27,7 @@ import com.google.common.jimfs.Jimfs;
 import com.google.copybara.authoring.Author;
 import com.google.copybara.exception.RepoException;
 import com.google.copybara.exception.ValidationException;
+import com.google.copybara.jj.JjRepository;
 import com.google.copybara.revision.Change;
 import com.google.copybara.revision.Changes;
 import com.google.copybara.testing.DummyOrigin;
@@ -46,6 +47,7 @@ import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
@@ -53,6 +55,8 @@ import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.Date;
 import java.util.TimeZone;
+import java.util.concurrent.atomic.AtomicInteger;
+import net.starlark.java.eval.Dict;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -601,7 +605,7 @@ public class TransformWorkTest {
                         ZonedDateTime.ofInstant(
                             Instant.ofEpochSecond(1591743457), ZoneId.of("UTC"))));
     assertThat(work.getLabel("COPYBARA_CURRENT_REV_DATE_TIME")).isEqualTo("2020-06-09T22:57:37Z");
-   }
+  }
 
   @Test
   public void testReversible() throws ValidationException {
@@ -1144,6 +1148,104 @@ transformation = core.transform([test])
   }
 
   @Test
+  public void testSymlinks_directoryEscape_writePath() throws Exception {
+    Path outsideDir = Files.createTempDirectory("outside");
+    Files.createSymbolicLink(workdir.resolve("pwn"), outsideDir);
+
+    Transformation writeThroughEscapedDirSymlink =
+        skylark.eval(
+            "transformation",
+            """
+            def test(ctx):
+                ctx.write_path(ctx.new_path("pwn/nested/hit.txt"), "ESCAPED")
+
+            transformation = core.transform([test])
+            """);
+
+    ValidationException veWrite =
+        assertThrows(
+            ValidationException.class,
+            () ->
+                writeThroughEscapedDirSymlink.transform(
+                    TransformWorks.of(workdir, "test", console)));
+    assertThat(veWrite).hasMessageThat().contains("is not inside the checkout directory");
+    assertThat(Files.exists(outsideDir.resolve("nested/hit.txt"))).isFalse();
+  }
+
+  @Test
+  public void testSymlinks_directoryEscape_readPath() throws Exception {
+    Path outsideDir = Files.createTempDirectory("outside");
+    Files.writeString(outsideDir.resolve("secret.txt"), "SECRET");
+    Files.createSymbolicLink(workdir.resolve("pwn"), outsideDir);
+
+    Transformation readThroughEscapedDirSymlink =
+        skylark.eval(
+            "transformation",
+            """
+            def test(ctx):
+                ctx.console.info(ctx.read_path(ctx.new_path("pwn/secret.txt")))
+
+            transformation = core.transform([test])
+            """);
+
+    ValidationException veRead =
+        assertThrows(
+            ValidationException.class,
+            () ->
+                readThroughEscapedDirSymlink.transform(
+                    TransformWorks.of(workdir, "test", console)));
+    assertThat(veRead).hasMessageThat().contains("is not inside the checkout directory");
+  }
+
+  @Test
+  public void testSymlinks_directoryEscape_setExecutable() throws Exception {
+    Path outsideDir = Files.createTempDirectory("outside");
+    Path outsideScript = Files.writeString(outsideDir.resolve("script.sh"), "#!/bin/sh\n");
+    outsideScript.toFile().setExecutable(false);
+    Files.createSymbolicLink(workdir.resolve("pwn"), outsideDir);
+
+    Transformation chmodThroughEscapedDirSymlink =
+        skylark.eval(
+            "transformation",
+            """
+            def test(ctx):
+                ctx.set_executable(ctx.new_path("pwn/script.sh"), True)
+
+            transformation = core.transform([test])
+            """);
+
+    ValidationException veExec =
+        assertThrows(
+            ValidationException.class,
+            () ->
+                chmodThroughEscapedDirSymlink.transform(
+                    TransformWorks.of(workdir, "test", console)));
+    assertThat(veExec).hasMessageThat().contains("is not inside the checkout directory");
+    assertThat(Files.isExecutable(outsideScript)).isFalse();
+  }
+
+  @Test
+  public void testSymlinks_internalDirectorySymlink_allowed() throws Exception {
+    Path realSubdir = Files.createDirectories(workdir.resolve("real_dir"));
+    Files.createSymbolicLink(workdir.resolve("link_dir"), Path.of("real_dir"));
+
+    Transformation writeAndReadInternalDirSymlink =
+        skylark.eval(
+            "transformation",
+            """
+            def test(ctx):
+                ctx.write_path(ctx.new_path("link_dir/nested/ok.txt"), "INSIDE")
+                ctx.console.info(ctx.read_path(ctx.new_path("link_dir/nested/ok.txt")))
+
+            transformation = core.transform([test])
+            """);
+
+    writeAndReadInternalDirSymlink.transform(TransformWorks.of(workdir, "test", console));
+    assertThat(Files.readString(realSubdir.resolve("nested/ok.txt"))).isEqualTo("INSIDE");
+    console.assertThat().onceInLog(MessageType.INFO, "INSIDE");
+  }
+
+  @Test
   public void symlinks_withCwdSymlink_worksCorrectly() throws Exception {
     workdir =
         Files.createSymbolicLink(workdir.resolve("symlink"), workdir).resolve("nested_workdir");
@@ -1301,6 +1403,52 @@ transformation = core.transform([test])
 
     assertThat(Files.isExecutable(workdir.resolve("file1.txt"))).isTrue();
     assertThat(Files.isExecutable(workdir.resolve("file2.txt"))).isFalse();
+  }
+
+  @Test
+  public void getJjRepository_notConfigured_throwsValidationException() {
+    TransformWork work = TransformWorks.of(workdir, "test", console);
+
+    ValidationException e = assertThrows(ValidationException.class, work::getJjRepository);
+    assertThat(e).hasMessageThat().contains("jj repository is not available in this context");
+  }
+
+  @Test
+  public void getJjRepository_loadsLazily() throws Exception {
+    JjRepository repo = newUninitializedJjRepo();
+    AtomicInteger loads = new AtomicInteger();
+
+    TransformWork work =
+        TransformWorks.of(workdir, "test", console)
+            .withJjRepository(
+                _ -> {
+                  loads.incrementAndGet();
+                  return repo;
+                });
+
+    assertThat(loads.get()).isEqualTo(0);
+    assertThat(work.getJjRepository()).isSameInstanceAs(repo);
+    assertThat(loads.get()).isEqualTo(1);
+  }
+
+  @Test
+  public void getJjRepository_preservedByTransformationCopies() throws Exception {
+    JjRepository repo = newUninitializedJjRepo();
+    TransformWork work = TransformWorks.of(workdir, "test", console).withJjRepository(_ -> repo);
+
+    assertThat(work.withConsole(new TestingConsole()).getJjRepository()).isSameInstanceAs(repo);
+    assertThat(work.withParams(Dict.empty()).getJjRepository()).isSameInstanceAs(repo);
+    assertThat(work.insideExplicitTransform().getJjRepository()).isSameInstanceAs(repo);
+  }
+
+  /** Returns a {@link JjRepository} that is never initialized on disk; no jj binary is needed. */
+  private JjRepository newUninitializedJjRepo() {
+    return new JjRepository(
+        workdir.resolve("jj_repo"),
+        "jj",
+        ImmutableMap.of(),
+        /* verbose= */ false,
+        Duration.ofMinutes(1));
   }
 
   private void touchFile(Path base, String path) throws IOException {

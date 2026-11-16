@@ -45,6 +45,7 @@ import com.google.copybara.git.CredentialFileHandler;
 import com.google.copybara.git.FetchResult;
 import com.google.copybara.git.GerritOptions;
 import com.google.copybara.git.GitEnvironment;
+import com.google.copybara.git.GitFetchOptions;
 import com.google.copybara.git.GitHubOptions;
 import com.google.copybara.git.GitOptions;
 import com.google.copybara.git.GitRepository;
@@ -506,18 +507,21 @@ public class GitTestUtil {
       this.forcePushForRefspec = forcePushForRefspec;
     }
 
+    private RewriteUrlGitRepository(RewriteUrlGitRepository other, @Nullable Path newWorkTree) {
+      super(other, newWorkTree);
+      this.generalOptions = other.generalOptions;
+      this.httpsRepos = other.httpsRepos;
+      this.validator = other.validator;
+      this.mappingPrefixes = other.mappingPrefixes;
+      this.forcePushForRefspec = other.forcePushForRefspec;
+    }
+
     @Override
-    public FetchResult fetch(
-        String url,
-        boolean prune,
-        boolean force,
-        Iterable<String> refspecs,
-        boolean partialFetch,
-        Optional<Integer> depth,
-        boolean tags)
+    public FetchResult fetch(String url, Iterable<String> refspecs, GitFetchOptions options)
         throws RepoException, ValidationException {
-      validator.validateFetch(url, prune, force, refspecs);
-      return super.fetch(mapUrl(url), prune, force, refspecs, partialFetch, Optional.empty(), tags);
+      validator.validateFetch(url, options.prune(), options.force(), refspecs);
+      return super.fetch(
+          mapUrl(url), refspecs, options.toBuilder().setDepth(Optional.empty()).build());
     }
 
     @Override
@@ -565,15 +569,7 @@ public class GitTestUtil {
 
     @Override
     public GitRepository withWorkTree(Path newWorkTree) {
-      return new RewriteUrlGitRepository(
-          getGitDir(),
-          newWorkTree,
-          generalOptions,
-          httpsRepos,
-          validator,
-          mappingPrefixes,
-          forcePushForRefspec,
-          gitRepositoryHook);
+      return new RewriteUrlGitRepository(this, newWorkTree);
     }
 
     private String mapUrl(String url) throws RepoException {
