@@ -19,6 +19,7 @@ load(":test.bzl", "all_tests")
 licenses(["notice"])
 
 LOCAL_TESTS = [
+    "CheckoutFileSystemTest.java",
     "InfoTest.java",
     "MigrateCmdTest.java",
     "util/DiffUtilTest.java",
@@ -28,6 +29,16 @@ LOCAL_TESTS = [
     "WorkflowTest.java",
     "WorkflowPrinterTest.java",
 ]
+
+all_tests(
+    name = "checkout_file_system_test",
+    tests = ["CheckoutFileSystemTest.java"],
+    deps = [
+        "//java/com/google/copybara:base",
+        "//third_party:starlark",
+        "//third_party:truth",
+    ],
+)
 
 all_tests(
     name = "workflow_printer_test",
@@ -189,6 +200,8 @@ all_tests(
         "//java/com/google/copybara/git:core",
         "//java/com/google/copybara/git:environment",
         "//java/com/google/copybara/hg",
+        "//java/com/google/copybara/jj",
+        "//java/com/google/copybara/jj:core",
         "//java/com/google/copybara/monitor",
         "//java/com/google/copybara/remotefile",
         "//java/com/google/copybara/revision",
@@ -227,6 +240,7 @@ all_tests(
         "//java/com/google/copybara/doc:annotations",
         "//java/com/google/copybara/effect",
         "//java/com/google/copybara/exception",
+        "//java/com/google/copybara/jj:core",
         "//java/com/google/copybara/monitor",
         "//java/com/google/copybara/revision",
         "//java/com/google/copybara/testing",

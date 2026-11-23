@@ -15,6 +15,7 @@
  */
 package com.google.copybara.http.auth;
 
+import com.google.api.client.http.GenericUrl;
 import com.google.api.client.http.HttpExecuteInterceptor;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSetMultimap;
@@ -37,5 +38,17 @@ public interface AuthInterceptor extends StarlarkValue {
   HttpExecuteInterceptor interceptor()
       throws CredentialRetrievalException, CredentialIssuingException;
 
-
+  /**
+   * Returns a per-request interceptor for a request starting at {@code initialUrl}. It applies
+   * {@link #interceptor()} until a redirect hop targets a different host than {@code initialUrl}
+   * (matched case-insensitively, ignoring port) or switches from {@code https} to non-{@code
+   * https}, withholds credentials on that hop and any later hops, and logs redirects to a different
+   * host or from {@code https} to non-{@code https}.
+   *
+   * @param initialUrl the URL of the request before any redirect
+   */
+  default HttpExecuteInterceptor interceptor(GenericUrl initialUrl)
+      throws CredentialRetrievalException, CredentialIssuingException {
+    return RedirectLoggingInterceptor.wrap(interceptor(), initialUrl);
+  }
 }

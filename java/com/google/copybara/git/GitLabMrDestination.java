@@ -23,6 +23,7 @@ import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.ImmutableSetMultimap;
 import com.google.copybara.Destination;
+import com.google.copybara.DestinationInfo;
 import com.google.copybara.GeneralOptions;
 import com.google.copybara.LazyResourceLoader;
 import com.google.copybara.WriterContext;
@@ -50,6 +51,7 @@ import java.net.URI;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
+import javax.annotation.Nullable;
 
 /**
  * A destination for creating/updating GitLab Merge Requests.
@@ -68,11 +70,15 @@ public class GitLabMrDestination implements Destination<GitRevision> {
         params.gitLabOptions.getCredentialFileHandler(
             params.repoUrl, params.usernamePasswordIssuer());
     this.localRepo =
-        LazyResourceLoader.memoized(
-            unused ->
-                params
-                    .destinationOptions()
-                    .localGitRepo(params.repoUrl().toString(), credentialFileHandler));
+        LazyResourceLoader.memoized(_ ->
+            params
+                .destinationOptions()
+                .localGitRepo(
+                    params.repoUrl().toString(),
+                    credentialFileHandler,
+                    params.partialFetch(),
+                    params.configFile().path(),
+                    params.workflowName()));
   }
 
   @Override
@@ -149,6 +155,7 @@ public class GitLabMrDestination implements Destination<GitRevision> {
         .setChecker(params.checker())
         .setDestinationOptions(params.destinationOptions())
         .setCredentials(credentialFileHandler)
+        .setDestinationInfo(params.destinationInfo())
         .build()
         .createWriter();
   }
@@ -266,7 +273,10 @@ public class GitLabMrDestination implements Destination<GitRevision> {
    *     labels
    * @param sourceBranchTemplate the template for the source branch name, which can contain labels
    * @param targetBranch the target branch for the merge request
-   * @param configFile the config file for the workflow
+   * @param configFile the config file for the workflow. Its path is used in the cached repo key for
+   *     partial fetches
+   * @param workflowName the name of the running workflow, used in the cached repo key for partial
+   *     fetches, or {@code null} if the config is not loaded by {@code migrate}
    * @param allowEmptyDiff whether to allow uploading even if the result is an empty diff
    * @param allowEmptyDiffMergeStatuses The merge statuses for which the destination will still
    *     upload a change despite an empty diff result
@@ -287,6 +297,7 @@ public class GitLabMrDestination implements Destination<GitRevision> {
       Optional<String> sourceBranchTemplate,
       String targetBranch,
       ConfigFile configFile,
+      @Nullable String workflowName,
       boolean allowEmptyDiff,
       ImmutableSet<DetailedMergeStatus> allowEmptyDiffMergeStatuses,
       GeneralOptions generalOptions,
@@ -295,7 +306,8 @@ public class GitLabMrDestination implements Destination<GitRevision> {
       GitDestinationOptions destinationOptions,
       boolean partialFetch,
       Iterable<GitIntegrateChanges> integrates,
-      Optional<Checker> checker) {
+      Optional<Checker> checker,
+      @Nullable DestinationInfo destinationInfo) {
 
     /** A builder for {@link GitLabMrDestinationParams}. */
     @AutoBuilder
@@ -366,6 +378,15 @@ public class GitLabMrDestination implements Destination<GitRevision> {
        * @return a reference to this builder
        */
       public abstract Builder setConfigFile(ConfigFile configFile);
+
+      /**
+       * Sets the name of the running workflow, used in the cached repo key for partial fetches.
+       *
+       * @param workflowName the workflow name, or {@code null} if the config is not loaded by
+       *     {@code migrate}
+       * @return a reference to this builder
+       */
+      public abstract Builder setWorkflowName(@Nullable String workflowName);
 
       /**
        * Sets whether to allow uploading even if the result is an empty diff
@@ -440,6 +461,14 @@ public class GitLabMrDestination implements Destination<GitRevision> {
        * @return a reference to this builder
        */
       public abstract Builder setChecker(Optional<Checker> checker);
+
+      /**
+       * Sets the destination info to be used by the destination object
+       *
+       * @param destinationInfo the destination info
+       * @return a reference to this builder
+       */
+      public abstract Builder setDestinationInfo(@Nullable DestinationInfo destinationInfo);
 
       /**
        * Builds the {@link GitLabMrDestinationParams} object

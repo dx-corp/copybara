@@ -34,6 +34,7 @@ import com.google.copybara.doc.annotations.DocSignaturePrefix;
 import com.google.copybara.doc.annotations.Example;
 import com.google.copybara.exception.RepoException;
 import com.google.copybara.exception.ValidationException;
+import com.google.copybara.jj.JjRepository;
 import com.google.copybara.revision.Change;
 import com.google.copybara.revision.Changes;
 import com.google.copybara.revision.Revision;
@@ -112,6 +113,7 @@ public final class TransformWork extends CheckoutFileSystem
   private final LazyResourceLoader<Endpoint> destinationApi;
   private final ResourceSupplier<DestinationReader> destinationReader;
   @Nullable private final DestinationInfo destinationInfo;
+  @Nullable private final LazyResourceLoader<JjRepository> jjRepo;
   private final String mode;
 
   public TransformWork(
@@ -141,6 +143,7 @@ public final class TransformWork extends CheckoutFileSystem
         destinationApi,
         destinationReader,
         /* destinationInfo= */ null,
+        /* jjRepo= */ null,
         mode);
   }
 
@@ -160,6 +163,7 @@ public final class TransformWork extends CheckoutFileSystem
       LazyResourceLoader<Endpoint> destinationApi,
       ResourceSupplier<DestinationReader> destinationReader,
       @Nullable DestinationInfo destinationInfo,
+      @Nullable LazyResourceLoader<JjRepository> jjRepo,
       String mode) {
     super(checkoutDir);
     this.metadata = Preconditions.checkNotNull(metadata);
@@ -176,6 +180,7 @@ public final class TransformWork extends CheckoutFileSystem
     this.destinationApi = Preconditions.checkNotNull(destinationApi);
     this.destinationReader = Preconditions.checkNotNull(destinationReader);
     this.destinationInfo = destinationInfo;
+    this.jjRepo = jjRepo;
     this.mode = mode;
   }
 
@@ -185,7 +190,7 @@ public final class TransformWork extends CheckoutFileSystem
    */
   @StarlarkMethod(name = "message", doc = "Message to be used in the change", structField = true)
   public String getMessage() {
-    return metadata.getMessage();
+    return metadata.message();
   }
 
   /** The workflow mode. */
@@ -196,7 +201,7 @@ public final class TransformWork extends CheckoutFileSystem
 
   @StarlarkMethod(name = "author", doc = "Author to be used in the change", structField = true)
   public Author getAuthor() {
-    return metadata.getAuthor();
+    return metadata.author();
   }
 
   @StarlarkMethod(
@@ -355,8 +360,8 @@ public final class TransformWork extends CheckoutFileSystem
         @Param(
             name = "whole_message",
             doc =
-                "By default Copybara only looks in the last paragraph for labels. This flag"
-                    + "make it replace labels in the whole message.",
+                "By default Copybara only looks in the last paragraph for labels to replace. If"
+                    + " True, replace labels in the entire message.",
             defaultValue = "False"),
       })
   public void replaceLabel(String labelName, String value, String separator, Boolean wholeMessage)
@@ -374,12 +379,13 @@ public final class TransformWork extends CheckoutFileSystem
         @Param(
             name = "whole_message",
             doc =
-                "By default Copybara only looks in the last paragraph for labels. This flag"
-                    + "make it replace labels in the whole message.",
+                "By default Copybara only looks in the last paragraph for labels to replace. If"
+                    + " True, replace labels in the entire message.",
             defaultValue = "False"),
       })
   public void removeLabel(String label, Boolean wholeMessage) throws ValidationException {
-    setMessage(parseMessage(wholeMessage).withRemovedLabelByName(label).toString());
+    String newMessage = parseMessage(wholeMessage).withRemovedLabelByName(label).toString();
+    setMessage(newMessage);
   }
 
   public void removeLabelWithValue(String label, String value, Boolean wholeMessage)
@@ -497,7 +503,7 @@ public final class TransformWork extends CheckoutFileSystem
         return StarlarkList.immutableCopyOf(result);
       }
     }
-    ImmutableSet<String> values = metadata.getHiddenLabels().get(label);
+    ImmutableSet<String> values = metadata.hiddenLabels().get(label);
     if (!values.isEmpty()) {
       if (!all) {
         return StarlarkList.immutableCopyOf(ImmutableList.of(Iterables.getLast(values)));
@@ -627,6 +633,7 @@ public final class TransformWork extends CheckoutFileSystem
         destinationApi,
         destinationReader,
         destinationInfo,
+        jjRepo,
         mode);
   }
 
@@ -656,6 +663,7 @@ public final class TransformWork extends CheckoutFileSystem
         destinationApi,
         destinationReader,
         destinationInfo,
+        jjRepo,
         mode);
   }
 
@@ -678,6 +686,7 @@ public final class TransformWork extends CheckoutFileSystem
         destinationApi,
         destinationReader,
         destinationInfo,
+        jjRepo,
         mode);
   }
 
@@ -699,6 +708,7 @@ public final class TransformWork extends CheckoutFileSystem
         destinationApi,
         destinationReader,
         destinationInfo,
+        jjRepo,
         mode);
   }
 
@@ -721,6 +731,7 @@ public final class TransformWork extends CheckoutFileSystem
         destinationApi,
         destinationReader,
         destinationInfo,
+        jjRepo,
         mode);
   }
 
@@ -742,6 +753,7 @@ public final class TransformWork extends CheckoutFileSystem
         destinationApi,
         destinationReader,
         destinationInfo,
+        jjRepo,
         mode);
   }
 
@@ -763,6 +775,7 @@ public final class TransformWork extends CheckoutFileSystem
         destinationApi,
         destinationReader,
         destinationInfo,
+        jjRepo,
         mode);
   }
 
@@ -783,7 +796,48 @@ public final class TransformWork extends CheckoutFileSystem
         destinationApi,
         destinationReader,
         newDestinationInfo,
+        jjRepo,
         mode);
+  }
+
+  /**
+   * Creates a clone of this transform work that loads its {@link JjRepository} from {@code
+   * jjRepoLoader}.
+   *
+   * <p>{@code jjRepoLoader} should be memoized (see {@link LazyResourceLoader#memoized}); it is
+   * invoked on every call to {@link #getJjRepository()}.
+   */
+  public TransformWork withJjRepository(LazyResourceLoader<JjRepository> jjRepoLoader) {
+    Preconditions.checkNotNull(jjRepoLoader);
+    return new TransformWork(
+        getCheckoutDir(),
+        metadata,
+        changes,
+        console,
+        migrationInfo,
+        resolvedReference,
+        treeState,
+        insideExplicitTransform,
+        lastRev,
+        currentRev,
+        skylarkTransformParams,
+        originApi,
+        destinationApi,
+        destinationReader,
+        destinationInfo,
+        jjRepoLoader,
+        mode);
+  }
+
+  /**
+   * Returns the workflow's {@link JjRepository}.
+   *
+   * @throws ValidationException if no JJ repository loader was configured for this work context
+   * @throws RepoException if loading the repository fails
+   */
+  public JjRepository getJjRepository() throws RepoException, ValidationException {
+    checkCondition(jjRepo != null, "jj repository is not available in this context.");
+    return jjRepo.load(console);
   }
 
   /**
@@ -834,7 +888,7 @@ public final class TransformWork extends CheckoutFileSystem
     labels.put(COPYBARA_CURRENT_MESSAGE, ImmutableList.of(getMessage()));
     labels.put(COPYBARA_AUTHOR, ImmutableList.of(getAuthor().getName(), getAuthor().getEmail()));
     labels.put(COPYBARA_CURRENT_MESSAGE_TITLE,
-        ImmutableList.of(Change.extractFirstLine(metadata.getMessage())));
+        ImmutableList.of(Change.extractFirstLine(metadata.message())));
     return labels;
   }
 

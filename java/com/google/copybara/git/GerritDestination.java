@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016 Google Inc.
+ * Copyright (C) 2016 Google LLC
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -36,6 +36,7 @@ import com.google.common.flogger.FluentLogger;
 import com.google.common.hash.Hashing;
 import com.google.copybara.ChangeMessage;
 import com.google.copybara.Destination;
+import com.google.copybara.DestinationInfo;
 import com.google.copybara.Endpoint;
 import com.google.copybara.GeneralOptions;
 import com.google.copybara.LabelFinder;
@@ -54,6 +55,7 @@ import com.google.copybara.git.gerritapi.ChangeInfo;
 import com.google.copybara.git.gerritapi.ChangesQuery;
 import com.google.copybara.git.gerritapi.GerritApi;
 import com.google.copybara.git.gerritapi.IncludeResult;
+import com.google.copybara.git.gerritapi.LabelInfo;
 import com.google.copybara.git.gerritapi.SetReviewInput;
 import com.google.copybara.git.gerritapi.SubmitInput;
 import com.google.copybara.profiler.Profiler.ProfilerTask;
@@ -116,6 +118,7 @@ public final class GerritDestination implements Destination<GitRevision> {
     private final Console console;
     private final ChangeIdPolicy changeIdPolicy;
     private final boolean allowEmptyDiffPatchSet;
+    private final ImmutableList<String> allowEmptyDiffPatchSetCheckLabels;
     private final GeneralOptions generalOptions;
     private final List<String> ccTemplate;
     private final List<String> labelsTemplate;
@@ -134,6 +137,7 @@ public final class GerritDestination implements Destination<GitRevision> {
         List<String> ccTemplate,
         ChangeIdPolicy changeIdPolicy,
         boolean allowEmptyDiffPatchSet,
+        List<String> allowEmptyDiffPatchSetCheckLabels,
         List<String> labelsTemplate,
         @Nullable Checker endpointChecker,
         @Nullable NotifyOption notifyOption,
@@ -148,6 +152,8 @@ public final class GerritDestination implements Destination<GitRevision> {
       this.console = Preconditions.checkNotNull(generalOptions.console());
       this.changeIdPolicy = Preconditions.checkNotNull(changeIdPolicy);
       this.allowEmptyDiffPatchSet = allowEmptyDiffPatchSet;
+      this.allowEmptyDiffPatchSetCheckLabels =
+          ImmutableList.copyOf(Preconditions.checkNotNull(allowEmptyDiffPatchSetCheckLabels));
       this.reviewersTemplate = Preconditions.checkNotNull(reviewersTemplate);
       this.ccTemplate = Preconditions.checkNotNull(ccTemplate);
       this.endpointChecker = endpointChecker;
@@ -254,8 +260,12 @@ public final class GerritDestination implements Destination<GitRevision> {
         return;
       }
       try (ProfilerTask ignore = generalOptions.profiler().start("previous_patchset_check")) {
-        ChangeInfo changeInfo = findChange(gerritMessageInfo.changeId);
-        if (changeInfo == null) {
+        ChangeInfo changeInfo =
+            findChange(
+                gerritMessageInfo.changeId,
+                /* maxDelay= */ 0,
+                !allowEmptyDiffPatchSetCheckLabels.isEmpty());
+        if (changeInfo == null || hasNegativeVoteOnCheckedLabels(changeInfo)) {
           return;
         }
         SameGitTree sameGitTree = new SameGitTree(repo, repoUrl, generalOptions, partialFetch);
@@ -270,21 +280,56 @@ public final class GerritDestination implements Destination<GitRevision> {
       }
     }
 
-    @Nullable
-    private ChangeInfo findChange(String changeId) throws ValidationException, RepoException {
-      return findChange(changeId, 0);
+    private boolean hasNegativeVoteOnCheckedLabels(ChangeInfo changeInfo) {
+      if (allowEmptyDiffPatchSetCheckLabels.isEmpty() || changeInfo.getLabels() == null) {
+        return false;
+      }
+      for (String labelName : allowEmptyDiffPatchSetCheckLabels) {
+        LabelInfo labelInfo = changeInfo.getLabels().get(labelName);
+        if (labelInfo != null && hasNegativeVote(labelInfo)) {
+          console.infoFmt(
+              "Creating a new Gerrit PatchSet for change %s/q/%s even if the diff is the"
+                  + " same because label '%s' has a negative vote",
+              repoUrl, changeInfo.getNumber(), labelName);
+          return true;
+        }
+      }
+      return false;
+    }
+
+    private static boolean hasNegativeVote(LabelInfo labelInfo) {
+      if (labelInfo.getRejected() != null
+          || labelInfo.getDisliked() != null
+          || labelInfo.getValue() < 0) {
+        return true;
+      }
+      return labelInfo.getAll().stream()
+          .anyMatch(
+              approval ->
+                  approval.getValue() != labelInfo.getDefaultValue() && approval.getValue() < 0);
     }
 
     @Nullable
     private ChangeInfo findChange(String changeId, int maxDelay)
         throws ValidationException, RepoException {
+      return findChange(changeId, maxDelay, /* includeLabels= */ false);
+    }
+
+    @Nullable
+    private ChangeInfo findChange(String changeId, int maxDelay, boolean includeLabels)
+        throws ValidationException, RepoException {
+      ImmutableList<IncludeResult> includes =
+          includeLabels
+              ? ImmutableList.of(
+                  IncludeResult.CURRENT_REVISION,
+                  IncludeResult.SUBMITTABLE,
+                  IncludeResult.LABELS,
+                  IncludeResult.DETAILED_LABELS)
+              : ImmutableList.of(IncludeResult.CURRENT_REVISION, IncludeResult.SUBMITTABLE);
       int currentAttempt = 0;
       long delayMs;
       do {
-        List<ChangeInfo> changes =
-            findChanges(
-                changeId,
-                ImmutableList.of(IncludeResult.CURRENT_REVISION, IncludeResult.SUBMITTABLE));
+        List<ChangeInfo> changes = findChanges(changeId, includes);
         if (!changes.isEmpty()) {
           return changes.get(0);
         }
@@ -334,7 +379,7 @@ public final class GerritDestination implements Destination<GitRevision> {
           }
         }
         String tripletId = changeInfo.getTripletId();
-        ChangeInfo resultInfo = gerritApi.submitChange(tripletId, new SubmitInput(null));
+        gerritApi.submitChange(tripletId, new SubmitInput(null));
         console.infoFmt("Submitted change : %s/changes/%s", repoUrl, tripletId);
       } catch (RepoException e) {
         Matcher matcher = USER_ERROR_REGEX_PATTERN.matcher(e.getMessage());
@@ -344,6 +389,23 @@ public final class GerritDestination implements Destination<GitRevision> {
         }
         throw e;
       }
+    }
+
+    /**
+     * Gerrit's {@code refs/for/<branch>%opt=val,opt=val,...} refspec push-option syntax has no
+     * escape mechanism for {@code ,} / {@code %} / {@code =}. A value containing them would be
+     * tokenized by the server as additional push options (e.g. {@code l=Code-Review+2} or {@code
+     * submit}), so ignore them and log a warning rather than passing untrusted bytes through.
+     */
+    private boolean isValidPushOptionValue(String name, String value) {
+      if (value.indexOf(',') != -1 || value.indexOf('%') != -1 || value.indexOf('=') != -1) {
+        console.warnFmt(
+            "Ignoring Gerrit push option '%s' with value '%s', which contains a character (',' /"
+                + " '%%' / '=') that would be interpreted as an additional push option.",
+            name, value);
+        return false;
+      }
+      return true;
     }
 
     @Override
@@ -417,11 +479,24 @@ public final class GerritDestination implements Destination<GitRevision> {
           }
         }
       }
+
       if (!options.isEmpty()) {
-        result += "%" + Joiner.on(',').join(options.entries()
-            .stream()
-            .map(e -> e.getKey()+(e.getValue().isPresent()?"="+e.getValue().get():""))
-            .collect(Collectors.toList()));
+        ImmutableList.Builder<String> optionStrings = ImmutableList.builder();
+        for (Entry<String, Optional<String>> e : options.entries()) {
+          if (e.getValue().isPresent()) {
+            String value = e.getValue().get();
+            if (!isValidPushOptionValue(e.getKey(), value)) {
+              continue;
+            }
+            optionStrings.add(e.getKey() + "=" + value);
+          } else {
+            optionStrings.add(e.getKey());
+          }
+        }
+        ImmutableList<String> validOptions = optionStrings.build();
+        if (!validOptions.isEmpty()) {
+          result += "%" + Joiner.on(',').join(validOptions);
+        }
       }
       return result;
     }
@@ -595,6 +670,7 @@ public final class GerritDestination implements Destination<GitRevision> {
 
   static GerritDestination newGerritDestination(
       Options options,
+      @Nullable DestinationInfo destinationInfo,
       String url,
       String fetch,
       String pushToRefsFor,
@@ -603,6 +679,7 @@ public final class GerritDestination implements Destination<GitRevision> {
       @Nullable NotifyOption notifyOption,
       ChangeIdPolicy changeIdPolicy,
       boolean allowEmptyPatchSet,
+      List<String> allowEmptyPatchSetCheckLabels,
       List<String> reviewers,
       List<String> cc,
       List<String> labels,
@@ -612,7 +689,9 @@ public final class GerritDestination implements Destination<GitRevision> {
       boolean gerritSubmit,
       boolean primaryBranchMigrationMode,
       @Nullable Checker checker,
-      @Nullable CredentialFileHandler credentials) {
+      @Nullable CredentialFileHandler credentials,
+      @Nullable String configPath,
+      @Nullable String workflowName) {
     GeneralOptions generalOptions = options.get(GeneralOptions.class);
     GerritOptions gerritOptions = options.get(GerritOptions.class);
     gerritSubmit =
@@ -642,6 +721,7 @@ public final class GerritDestination implements Destination<GitRevision> {
                 cc,
                 changeIdPolicy,
                 allowEmptyPatchSet,
+                allowEmptyPatchSetCheckLabels,
                 labels,
                 endpointChecker,
                 notifyOption,
@@ -649,9 +729,12 @@ public final class GerritDestination implements Destination<GitRevision> {
                 partialFetch,
                 gerritSubmit,
                 primaryBranchMigrationMode),
+            destinationInfo,
             integrates,
             checker,
-            credentials),
+            credentials,
+            configPath,
+            workflowName),
         submit);
   }
 

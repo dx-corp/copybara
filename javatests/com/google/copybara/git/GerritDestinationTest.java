@@ -38,6 +38,7 @@ import com.google.api.client.http.LowLevelHttpRequest;
 import com.google.common.base.Joiner;
 import com.google.common.base.Strings;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.ImmutableSetMultimap;
 import com.google.common.collect.Iterables;
@@ -47,10 +48,12 @@ import com.google.copybara.Destination.Writer;
 import com.google.copybara.LabelFinder;
 import com.google.copybara.Metadata;
 import com.google.copybara.MigrationInfo;
+import com.google.copybara.ModuleSet;
 import com.google.copybara.TransformWork;
 import com.google.copybara.WriterContext;
 import com.google.copybara.authoring.Author;
 import com.google.copybara.checks.CheckerException;
+import com.google.copybara.config.LabelsAwareModule;
 import com.google.copybara.effect.DestinationEffect;
 import com.google.copybara.effect.DestinationEffect.Type;
 import com.google.copybara.exception.RedundantChangeException;
@@ -74,6 +77,7 @@ import com.google.copybara.testing.TransformResults;
 import com.google.copybara.testing.git.GitTestUtil;
 import com.google.copybara.testing.git.GitTestUtil.MockRequestAssertion;
 import com.google.copybara.testing.git.GitTestUtil.Validator;
+import com.google.copybara.util.FileUtil;
 import com.google.copybara.util.Glob;
 import com.google.copybara.util.console.Message;
 import com.google.copybara.util.console.Message.MessageType;
@@ -89,6 +93,7 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
+import javax.annotation.Nullable;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -1561,6 +1566,190 @@ public class GerritDestinationTest {
   }
 
   @Test
+  public void testTopicPushOptionInjectionIgnored_commaAndEquals() throws Exception {
+    fetch = "master";
+    options.setForce(true);
+    writeFile(workdir, "file", "some content");
+
+    process(
+        new DummyRevision("origin_ref").withContextReference("x,l=Code-Review+2,submit"),
+        destination("topic = 't_${CONTEXT_REFERENCE}'"));
+
+    assertThat(getGerritRef(repo(), "refs/for/master"))
+        .isEqualTo("refs/for/master%hashtag=copybara_id_origin_ref_commiter@email");
+    console
+        .assertThat()
+        .logContains(
+            MessageType.WARNING,
+            ".*" + Pattern.quote("Ignoring Gerrit push option 'topic' with value"
+                + " 't_x,l=Code-Review+2,submit'") + ".*");
+  }
+
+  @Test
+  public void testTopicPushOptionInjectionIgnored_percent() throws Exception {
+    fetch = "master";
+    options.setForce(true);
+    writeFile(workdir, "file", "some content");
+
+    process(
+        new DummyRevision("origin_ref").withContextReference("x%wip"),
+        destination("topic = 't_${CONTEXT_REFERENCE}'"));
+
+    assertThat(getGerritRef(repo(), "refs/for/master"))
+        .isEqualTo("refs/for/master%hashtag=copybara_id_origin_ref_commiter@email");
+    console
+        .assertThat()
+        .logContains(
+            MessageType.WARNING,
+            ".*" + Pattern.quote("Ignoring Gerrit push option 'topic' with value 't_x%wip'")
+                + ".*");
+  }
+
+  @Test
+  public void testTopicPushOptionInjectionIgnored_equals() throws Exception {
+    fetch = "master";
+    options.setForce(true);
+    writeFile(workdir, "file", "some content");
+
+    process(
+        new DummyRevision("origin_ref").withContextReference("x=y"),
+        destination("topic = 't_${CONTEXT_REFERENCE}'"));
+
+    assertThat(getGerritRef(repo(), "refs/for/master"))
+        .isEqualTo("refs/for/master%hashtag=copybara_id_origin_ref_commiter@email");
+    console
+        .assertThat()
+        .logContains(
+            MessageType.WARNING,
+            ".*" + Pattern.quote("Ignoring Gerrit push option 'topic' with value 't_x=y'") + ".*");
+  }
+
+  @Test
+  public void testReviewerPushOptionInjectionIgnored() throws Exception {
+    pushToRefsFor = "master";
+    fetch = "master";
+    options.setForce(true);
+    writeFile(workdir, "file", "some content");
+    url = "https://localhost:33333/foo/bar";
+    mockNoChangesFound();
+
+    DummyRevision originRef = new DummyRevision("origin_ref");
+    GerritDestination destination =
+        destination("submit = False", "reviewers = [\"${SOME_REVIEWER}\"]");
+    Glob glob = Glob.createGlob(ImmutableList.of("**"), excludedDestinationPaths);
+    WriterContext writerContext =
+        new WriterContext(
+            "GerritDestination", "TEST", false, new DummyRevision("test"), Glob.ALL_FILES.roots());
+
+    List<DestinationEffect> result =
+        destination
+            .newWriter(writerContext)
+            .write(
+                TransformResults.of(workdir, originRef)
+                    .withSummary("Test message")
+                    .withIdentity(originRef.asString())
+                    .withLabelFinder(
+                        e ->
+                            e.equals("SOME_REVIEWER")
+                                ? ImmutableList.of("foo@example.com,submit", "bar@example.com")
+                                : ImmutableList.of()),
+                glob,
+                console);
+    assertThat(result).hasSize(1);
+    assertThat(getGerritRef(repo(), "refs/for/master"))
+        .isEqualTo(
+            "refs/for/master%hashtag=copybara_id_origin_ref_commiter@email,r=bar@example.com");
+    console
+        .assertThat()
+        .logContains(
+            MessageType.WARNING,
+            ".*" + Pattern.quote("Ignoring Gerrit push option 'r' with value"
+                + " 'foo@example.com,submit'") + ".*");
+  }
+
+  @Test
+  public void testCcPushOptionInjectionIgnored() throws Exception {
+    pushToRefsFor = "master";
+    fetch = "master";
+    options.setForce(true);
+    writeFile(workdir, "file", "some content");
+    url = "https://localhost:33333/foo/bar";
+    mockNoChangesFound();
+
+    DummyRevision originRef = new DummyRevision("origin_ref");
+    GerritDestination destination = destination("submit = False", "cc = [\"${SOME_CC}\"]");
+    Glob glob = Glob.createGlob(ImmutableList.of("**"), excludedDestinationPaths);
+    WriterContext writerContext =
+        new WriterContext(
+            "GerritDestination", "TEST", false, new DummyRevision("test"), Glob.ALL_FILES.roots());
+
+    List<DestinationEffect> result =
+        destination
+            .newWriter(writerContext)
+            .write(
+                TransformResults.of(workdir, originRef)
+                    .withSummary("Test message")
+                    .withIdentity(originRef.asString())
+                    .withLabelFinder(
+                        e ->
+                            e.equals("SOME_CC")
+                                ? ImmutableList.of("foo@example.com,l=Code-Review+2")
+                                : ImmutableList.of()),
+                glob,
+                console);
+    assertThat(result).hasSize(1);
+    assertThat(getGerritRef(repo(), "refs/for/master"))
+        .isEqualTo("refs/for/master%hashtag=copybara_id_origin_ref_commiter@email");
+    console
+        .assertThat()
+        .logContains(
+            MessageType.WARNING,
+            ".*" + Pattern.quote("Ignoring Gerrit push option 'cc' with value"
+                + " 'foo@example.com,l=Code-Review+2'") + ".*");
+  }
+
+  @Test
+  public void testLabelPushOptionInjectionIgnored() throws Exception {
+    pushToRefsFor = "master";
+    fetch = "master";
+    options.setForce(true);
+    writeFile(workdir, "file", "some content");
+    url = "https://localhost:33333/foo/bar";
+    mockNoChangesFound();
+
+    DummyRevision originRef = new DummyRevision("origin_ref");
+    GerritDestination destination = destination("submit = False", "labels = [\"${SOME_LABELS}\"]");
+    Glob glob = Glob.createGlob(ImmutableList.of("**"), excludedDestinationPaths);
+    WriterContext writerContext =
+        new WriterContext(
+            "GerritDestination", "TEST", false, new DummyRevision("test"), Glob.ALL_FILES.roots());
+
+    List<DestinationEffect> result =
+        destination
+            .newWriter(writerContext)
+            .write(
+                TransformResults.of(workdir, originRef)
+                    .withSummary("Test message")
+                    .withIdentity(originRef.asString())
+                    .withLabelFinder(
+                        e ->
+                            e.equals("SOME_LABELS")
+                                ? ImmutableList.of("Code-Review+1,submit")
+                                : ImmutableList.of()),
+                glob,
+                console);
+    assertThat(result).hasSize(1);
+    assertThat(getGerritRef(repo(), "refs/for/master"))
+        .isEqualTo("refs/for/master%hashtag=copybara_id_origin_ref_commiter@email");
+    console
+        .assertThat()
+        .logContains(
+            MessageType.WARNING,
+            ".*" + Pattern.quote("Ignoring Gerrit push option 'label' with value"
+                + " 'Code-Review+1,submit'") + ".*");
+  }
+
+  @Test
   public void testEmptyReviewersField() throws Exception {
     pushToRefsFor = "master";
     writeFile(workdir, "file", "some content");
@@ -1684,6 +1873,7 @@ public class GerritDestinationTest {
             ImmutableList.of(),
             ChangeIdPolicy.REPLACE,
             /*allowEmptyDiffPatchSet=*/ true,
+            /* allowEmptyDiffPatchSetCheckLabels= */ ImmutableList.of(),
             /*labels*/ ImmutableList.of(),
             /*endpointChecker=*/ null,
             /*notifyOption*/ null,
@@ -1993,7 +2183,103 @@ public class GerritDestinationTest {
     runAllowEmptyPatchSetFalse(repo.resolveReference("HEAD").getHash());
   }
 
+  @Test
+  public void testNoAllowEmptyPatchSet_allowedWhenCheckedLabelHasNegativeVote() throws Exception {
+    Path workTree = Files.createTempDirectory("populate");
+    GitRepository repo = repo().withWorkTree(workTree);
+
+    writeFile(workTree, "foo.txt", "content 1");
+    repo.add().all().run();
+    repo.simpleCommand("commit", "-m", "Old parent");
+
+    writeFile(workdir, "foo.txt", "content 2");
+
+    mockNoChangesFound();
+    runAllowEmptyPatchSetWithOptions(
+        repo.resolveReference("HEAD").getHash(),
+        "allow_empty_diff_patchset = False,"
+            + " allow_empty_diff_patchset_check_labels = ['Verified']");
+
+    String primaryBranch = repo.getPrimaryBranch();
+
+    GitRevision currentRev = repo.resolveReference(getGerritRef(repo, "refs/for/" + primaryBranch));
+    repo.simpleCommand("update-ref", "refs/changes/10/12310/1", currentRev.getHash());
+    repo.simpleCommand("update-ref", "-d", getGerritRef(repo, "refs/for/" + primaryBranch));
+
+    repo.forceCheckout(primaryBranch);
+    mockChangeFoundWithLabels(
+        currentRev,
+        12310,
+        "\"Verified\": {\"all\": [{\"value\": -1, \"_account_id\": 1000096}],"
+            + " \"default_value\": 0}");
+    runAllowEmptyPatchSetWithOptions(
+        repo.resolveReference("HEAD").getHash(),
+        "allow_empty_diff_patchset = False,"
+            + " allow_empty_diff_patchset_check_labels = ['Verified']");
+
+    console
+        .assertThat()
+        .onceInLog(
+            MessageType.INFO,
+            "Creating a new Gerrit PatchSet for change https://localhost:33333/foo/bar/q/12310"
+                + " even if the diff is the same because label 'Verified' has a negative vote");
+  }
+
+  @Test
+  public void testNoAllowEmptyPatchSet_skipsWhenCheckedLabelHasNoNegativeVote() throws Exception {
+    Path workTree = Files.createTempDirectory("populate");
+    GitRepository repo = repo().withWorkTree(workTree);
+
+    writeFile(workTree, "foo.txt", "content 1");
+    repo.add().all().run();
+    repo.simpleCommand("commit", "-m", "Old parent");
+
+    writeFile(workdir, "foo.txt", "content 2");
+
+    mockNoChangesFound();
+    runAllowEmptyPatchSetWithOptions(
+        repo.resolveReference("HEAD").getHash(),
+        "allow_empty_diff_patchset = False,"
+            + " allow_empty_diff_patchset_check_labels = ['Verified']");
+
+    String primaryBranch = repo.getPrimaryBranch();
+
+    GitRevision currentRev = repo.resolveReference(getGerritRef(repo, "refs/for/" + primaryBranch));
+    repo.simpleCommand("update-ref", "refs/changes/10/12310/1", currentRev.getHash());
+    repo.simpleCommand("update-ref", "-d", getGerritRef(repo, "refs/for/" + primaryBranch));
+
+    repo.forceCheckout(primaryBranch);
+    mockChangeFoundWithLabels(
+        currentRev,
+        12310,
+        "\"Verified\": {\"all\": [{\"value\": 1, \"_account_id\": 1000096}],"
+            + " \"default_value\": 0},"
+            + "\"Code-Review\": {\"all\": [{\"value\": -1, \"_account_id\": 1000096}],"
+            + " \"default_value\": 0}");
+    RedundantChangeException thrown =
+        assertThrows(
+            RedundantChangeException.class,
+            () ->
+                runAllowEmptyPatchSetWithOptions(
+                    repo.resolveReference("HEAD").getHash(),
+                    "allow_empty_diff_patchset = False,"
+                        + " allow_empty_diff_patchset_check_labels = ['Verified']"));
+    assertThat(thrown)
+        .hasMessageThat()
+        .contains(
+            String.format(
+                "Skipping creating a new Gerrit PatchSet for change"
+                    + " https://localhost:33333/foo/bar/q/12310 since the diff is the same from"
+                    + " the previous PatchSet (%s)",
+                currentRev.getHash()));
+  }
+
   private void mockChangeFound(GitRevision currentRev, int changeNum) throws IOException {
+    mockChangeFoundWithLabels(currentRev, changeNum, /* labelsJson= */ null);
+  }
+
+  private void mockChangeFoundWithLabels(
+      GitRevision currentRev, int changeNum, @Nullable String labelsJson) throws IOException {
     when(gitUtil
             .httpTransport()
             .buildRequest(eq("GET"), startsWith("https://localhost:33333/changes/")))
@@ -2001,18 +2287,26 @@ public class GerritDestinationTest {
             (Answer<LowLevelHttpRequest>)
                 invocation -> {
                   String change = changeIdFromRequest((String) invocation.getArguments()[1]);
+                  String labelsField =
+                      labelsJson == null ? "" : String.format(", \"labels\" : {%s}", labelsJson);
                   return mockResponse(
                       String.format(
                           "[{"
                               + "\"change_id\" : \"%s\", "
                               + "\"status\" : \"NEW\", "
                               + "\"_number\" : \"%s\", "
-                              + "\"current_revision\" : \"%s\"}]",
-                          change, changeNum, currentRev.getHash()));
+                              + "\"current_revision\" : \"%s\""
+                              + "%s}]",
+                          change, changeNum, currentRev.getHash(), labelsField));
                 });
   }
 
   private void runAllowEmptyPatchSetFalse(String baseline)
+      throws ValidationException, RepoException, IOException {
+    runAllowEmptyPatchSetWithOptions(baseline, "allow_empty_diff_patchset = False");
+  }
+
+  private void runAllowEmptyPatchSetWithOptions(String baseline, String destinationOptions)
       throws ValidationException, RepoException, IOException {
     fetch = repo().getPrimaryBranch();
     DummyRevision originRef = new DummyRevision("origin_ref");
@@ -2020,7 +2314,7 @@ public class GerritDestinationTest {
         new WriterContext("GerritDestinationTest", "test", false, originRef,
             Glob.ALL_FILES.roots());
     ImmutableList<DestinationEffect> result =
-        destination("allow_empty_diff_patchset = False")
+        destination(destinationOptions)
             .newWriter(writerContext)
             .write(
                 TransformResults.of(workdir, originRef)
@@ -2029,5 +2323,59 @@ public class GerritDestinationTest {
                 Glob.createGlob(ImmutableList.of("**"), excludedDestinationPaths),
                 console);
     assertThat(result).hasSize(1);
+  }
+
+  /**
+   * Verifies that, with {@code SET_GIT_DESTINATION_PREFIX_FOR_PARTIAL_FETCH} on, {@code
+   * git.gerrit_destination} passes the config path and workflow name through, so a partial-fetch
+   * destination uses a bare repo keyed by {@code <configPath>:<workflowName><url>}.
+   */
+  @Test
+  public void setGitDestinationPrefixForPartialFetch_flagOn_prefixesPartialFetchCacheDir()
+      throws Exception {
+    String migrationName = "piper_to_gerrit";
+    fetch = "master";
+    options.general.setTemporaryFeaturesForTest(
+        ImmutableMap.of(
+            GitDestinationOptions.SET_GIT_DESTINATION_PREFIX_FOR_PARTIAL_FETCH, "true"));
+    ModuleSet moduleSet = skylark.createModuleSet();
+    for (Object module : moduleSet.getModules().values()) {
+      if (module instanceof LabelsAwareModule m) {
+        m.setWorkflowName(migrationName);
+      }
+    }
+    WriterContext writerContext =
+        new WriterContext(
+            migrationName, "TEST", false, new DummyRevision("test"), Glob.ALL_FILES.roots());
+
+    String fullGitDir =
+        gerritDestinationGitDir(moduleSet, /* partialFetch= */ false, writerContext);
+    String partialGitDir =
+        gerritDestinationGitDir(moduleSet, /* partialFetch= */ true, writerContext);
+
+    assertThat(fullGitDir)
+        .isEqualTo(FileUtil.resolveDirInCache(url, options.git.getRepoStorage()).toString());
+    assertThat(partialGitDir)
+        .isEqualTo(
+            FileUtil.resolveDirInCache(
+                    "copy.bara.sky:" + migrationName + url, options.git.getRepoStorage())
+                .toString());
+  }
+
+  // Returns a string because Path is both Iterable and Comparable, which makes
+  // Truth.assertThat(Path) ambiguous with the Truth version used outside google3.
+  private String gerritDestinationGitDir(
+      ModuleSet moduleSet, boolean partialFetch, WriterContext writerContext) throws Exception {
+    GerritDestination destination =
+        skylark.evalWithModuleSet(
+            "result",
+            String.format(
+                "result = git.gerrit_destination(url = '%s', fetch = '%s', partial_fetch = %s)",
+                url, fetch, partialFetch ? "True" : "False"),
+            moduleSet);
+    return ((GitDestination.WriterImpl<?>) destination.newWriter(writerContext))
+        .getRepository(console)
+        .getGitDir()
+        .toString();
   }
 }

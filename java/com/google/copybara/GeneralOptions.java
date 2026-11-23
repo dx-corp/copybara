@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016 Google Inc.
+ * Copyright (C) 2016 Google LLC
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -42,6 +42,7 @@ import com.google.copybara.monitor.EventMonitor.EventMonitors;
 import com.google.copybara.profiler.Profiler;
 import com.google.copybara.profiler.Profiler.ProfilerTask;
 import com.google.copybara.util.CommandRunner;
+import com.google.copybara.util.DiffUtil;
 import com.google.copybara.util.DirFactory;
 import com.google.copybara.util.console.Console;
 import com.google.copybara.util.console.StarlarkMode;
@@ -442,8 +443,8 @@ public final class GeneralOptions implements Option {
               + " names uppercased and prefixed with "
               + CLI_FLAG_PREFIX
               + " to avoid name clashes with existing labels. I.e. `--labels=label1:value1` will"
-              + " define a label FLAG_LABEL1Format: --labels=flag1:value1,flag2:value2 Or: --labels"
-              + " flag1:value1,flag2:value2 ",
+              + " define a label FLAG_LABEL1. Format: --labels=flag1:value1,flag2:value2 Or:"
+              + " --labels flag1:value1,flag2:value2",
       converter = MapConverter.class)
   ImmutableMap<String, String> labels = ImmutableMap.of();
 
@@ -463,6 +464,18 @@ public final class GeneralOptions implements Option {
 
   public String getDiffBin() {
     return diffBin;
+  }
+
+  @Parameter(
+      names = "--diff-max-log-lines",
+      description =
+          "Maximum number of diff output lines to log during workflow reversible checks (defaults"
+              + " to 1000; 0 disables logger output; negative values disable the logger line"
+              + " limit). Does not truncate the diff itself.")
+  private int diffMaxLogLines = DiffUtil.DEFAULT_MAX_LOG_LINES;
+
+  public int getDiffMaxLogLines() {
+    return diffMaxLogLines;
   }
 
   public static final String PATCH_BIN_FLAG = "--patch-bin";
@@ -587,5 +600,19 @@ public final class GeneralOptions implements Option {
 
   public boolean allowEmptyDiff(boolean configAllowEmptyDiff) {
     return this.allowEmptyDiff == null ? configAllowEmptyDiff : this.allowEmptyDiff;
+  }
+
+  @Parameter(
+      names = "--load-from-stdin",
+      description = "Read the configuration file from stdin instead of a file.")
+  boolean loadFromStdin = false;
+
+  public boolean isLoadFromStdin() {
+    return loadFromStdin;
+  }
+
+  @VisibleForTesting
+  public void setLoadFromStdinForTest(boolean loadFromStdin) {
+    this.loadFromStdin = loadFromStdin;
   }
 }

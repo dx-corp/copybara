@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016 Google Inc.
+ * Copyright (C) 2016 Google LLC
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -28,6 +28,7 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSetMultimap;
 import com.google.copybara.ChangeMessage;
 import com.google.copybara.Destination;
+import com.google.copybara.DestinationInfo;
 import com.google.copybara.Endpoint;
 import com.google.copybara.GeneralOptions;
 import com.google.copybara.LabelFinder;
@@ -91,6 +92,7 @@ public class GitHubPrDestination implements Destination<GitRevision> {
 
   @Nullable private String resolvedDestinationRef;
   @Nullable CredentialFileHandler credentials;
+  @Nullable private final DestinationInfo destinationInfo;
 
   GitHubPrDestination(
       String url,
@@ -109,12 +111,14 @@ public class GitHubPrDestination implements Destination<GitRevision> {
       @Nullable String body,
       List<String> assignees,
       ConfigFile mainConfigFile,
+      @Nullable String workflowName,
       @Nullable Checker endpointChecker,
       boolean updateDescription,
       GitHubHost ghHost,
       boolean primaryBranchMigrationMode,
       @Nullable Checker checker,
-      @Nullable CredentialFileHandler credentials) {
+      @Nullable CredentialFileHandler credentials,
+      @Nullable DestinationInfo destinationInfo) {
     this.url = Preconditions.checkNotNull(url);
     this.destinationRef = Preconditions.checkNotNull(destinationRef);
     this.prBranch = prBranch;
@@ -133,11 +137,15 @@ public class GitHubPrDestination implements Destination<GitRevision> {
     this.updateDescription = updateDescription;
     this.ghHost = Preconditions.checkNotNull(ghHost);
     this.checker = checker;
-    this.localRepo = memoized(ignored -> destinationOptions.localGitRepo(url, credentials));
     this.mainConfigFile = Preconditions.checkNotNull(mainConfigFile);
+    this.localRepo =
+        memoized(ignored ->
+            destinationOptions.localGitRepo(
+                url, credentials, this.partialFetch, mainConfigFile.path(), workflowName));
     this.endpointChecker = endpointChecker;
     this.primaryBranchMigrationMode = primaryBranchMigrationMode;
     this.credentials = credentials;
+    this.destinationInfo = destinationInfo;
   }
 
   @Override
@@ -231,6 +239,7 @@ public class GitHubPrDestination implements Destination<GitRevision> {
         gitOptions.gitTagOverwrite,
         checker,
         destinationOptions,
+        destinationInfo,
         credentials) {
       @Override
       public ImmutableList<DestinationEffect> write(

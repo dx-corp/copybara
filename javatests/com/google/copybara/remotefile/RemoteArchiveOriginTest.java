@@ -29,6 +29,7 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.ImmutableSetMultimap;
 import com.google.common.io.BaseEncoding;
+import com.google.common.testing.TestLogHandler;
 import com.google.copybara.GeneralOptions;
 import com.google.copybara.Origin.Reader;
 import com.google.copybara.Origin.Reader.ChangesResponse;
@@ -38,6 +39,7 @@ import com.google.copybara.authoring.Authoring.AuthoringMappingMode;
 import com.google.copybara.credentials.ConstantCredentialIssuer;
 import com.google.copybara.credentials.CredentialModule.UsernamePasswordIssuer;
 import com.google.copybara.http.auth.AuthInterceptor;
+import com.google.copybara.http.auth.RedirectLoggingInterceptor;
 import com.google.copybara.http.auth.UsernamePasswordInterceptor;
 import com.google.copybara.http.testing.MockHttpTester;
 import com.google.copybara.util.Glob;
@@ -58,6 +60,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.logging.Logger;
 import org.apache.commons.compress.archivers.jar.JarArchiveOutputStream;
 import org.apache.commons.compress.archivers.tar.TarArchiveEntry;
 import org.apache.commons.compress.archivers.tar.TarArchiveOutputStream;
@@ -566,6 +569,128 @@ public final class RemoteArchiveOriginTest {
     reader.checkout(underTest.resolve(null), workdir);
 
     assertThatPath(workdir).containsFile("test.txt", "hello world\n");
+  }
+
+  /**
+   * Verifies that cross-host redirects log a warning and withhold the initial host's credentials
+   * while still following the redirect.
+   */
+  @Test
+  public void checkout_withBasicAuthAndRedirectToOtherHost_logsAndWithholdsCredentials()
+      throws Exception {
+    Logger logger = Logger.getLogger(RedirectLoggingInterceptor.class.getName());
+    TestLogHandler logHandler = new TestLogHandler();
+    logger.addHandler(logHandler);
+    MockHttpTester http = new MockHttpTester();
+    remoteFileOptions.transport =
+        () -> new GclientHttpStreamFactory(http.getTransport(), Duration.ofSeconds(20));
+    List<String> firstHopAuthorization = new ArrayList<>();
+    List<String> redirectedAuthorization = new ArrayList<>();
+    http.mockHttp((method, url, req, resp) -> {
+      if (url.equals("https://foo.com/archive.zip")) {
+        List<String> authHeaders = req.getHeaders().get("authorization");
+        if (authHeaders != null) {
+          firstHopAuthorization.addAll(authHeaders);
+        }
+        resp.setStatusCode(302).addHeader("Location", "https://bar.com/archive.zip");
+        return;
+      }
+      List<String> authHeaders = req.getHeaders().get("authorization");
+      if (authHeaders != null) {
+        redirectedAuthorization.addAll(authHeaders);
+      }
+      try {
+        resp.setStatusCode(200)
+            .setContent(createZipFile("test.txt", "hello world\n"))
+            .setContentType("application/zip");
+      } catch (Exception e) {
+        throw new RuntimeException(e);
+      }
+    });
+    when(versionSelector.select(any(), any(), any())).thenReturn(Optional.of(""));
+    when(versionList.list()).thenReturn(ImmutableSet.of());
+    RemoteArchiveOrigin underTest =
+        getRemoteArchiveOriginUnderTest(
+            "https://foo.com/archive.zip",
+            versionList,
+            versionSelector,
+            versionResolver,
+            RemoteFileType.ZIP,
+            new UsernamePasswordInterceptor(
+                UsernamePasswordIssuer.create(
+                    ConstantCredentialIssuer.createConstantSecret("username", "testuser"),
+                    ConstantCredentialIssuer.createConstantSecret("password", "testpass"))));
+    Reader<RemoteArchiveRevision> reader = underTest.newReader(Glob.ALL_FILES, authoring);
+
+    try {
+      reader.checkout(underTest.resolve(null), workdir);
+
+      assertThatPath(workdir).containsFile("test.txt", "hello world\n");
+      assertThat(firstHopAuthorization).containsExactly(basicAuth("testuser", "testpass"));
+      assertThat(redirectedAuthorization).isEmpty();
+      assertThat(logHandler.getStoredLogRecords()).hasSize(1);
+      assertThat(logHandler.getStoredLogRecords().get(0).getMessage())
+          .contains("from=foo.com to=bar.com");
+    } finally {
+      logger.removeHandler(logHandler);
+    }
+  }
+
+  /**
+   * Verifies that same-host redirects (case-insensitive, ignoring port) retain credentials without
+   * logging a warning.
+   */
+  @Test
+  public void checkout_withBasicAuthAndRedirectToSameHostDifferentCaseAndPort_keepsCredentials()
+      throws Exception {
+    Logger logger = Logger.getLogger(RedirectLoggingInterceptor.class.getName());
+    TestLogHandler logHandler = new TestLogHandler();
+    logger.addHandler(logHandler);
+    MockHttpTester http = new MockHttpTester();
+    remoteFileOptions.transport =
+        () -> new GclientHttpStreamFactory(http.getTransport(), Duration.ofSeconds(20));
+    List<String> redirectedAuthorization = new ArrayList<>();
+    http.mockHttp((method, url, req, resp) -> {
+      if (url.equals("https://foo.com/archive.zip")) {
+        resp.setStatusCode(302).addHeader("Location", "https://FOO.COM:8443/archive2.zip");
+        return;
+      }
+      List<String> authHeaders = req.getHeaders().get("authorization");
+      if (authHeaders != null) {
+        redirectedAuthorization.addAll(authHeaders);
+      }
+      try {
+        resp.setStatusCode(200)
+            .setContent(createZipFile("test.txt", "hello world\n"))
+            .setContentType("application/zip");
+      } catch (Exception e) {
+        throw new RuntimeException(e);
+      }
+    });
+    when(versionSelector.select(any(), any(), any())).thenReturn(Optional.of(""));
+    when(versionList.list()).thenReturn(ImmutableSet.of());
+    RemoteArchiveOrigin underTest =
+        getRemoteArchiveOriginUnderTest(
+            "https://foo.com/archive.zip",
+            versionList,
+            versionSelector,
+            versionResolver,
+            RemoteFileType.ZIP,
+            new UsernamePasswordInterceptor(
+                UsernamePasswordIssuer.create(
+                    ConstantCredentialIssuer.createConstantSecret("username", "testuser"),
+                    ConstantCredentialIssuer.createConstantSecret("password", "testpass"))));
+    Reader<RemoteArchiveRevision> reader = underTest.newReader(Glob.ALL_FILES, authoring);
+
+    try {
+      reader.checkout(underTest.resolve(null), workdir);
+
+      assertThatPath(workdir).containsFile("test.txt", "hello world\n");
+      assertThat(redirectedAuthorization).containsExactly(basicAuth("testuser", "testpass"));
+      assertThat(logHandler.getStoredLogRecords()).isEmpty();
+    } finally {
+      logger.removeHandler(logHandler);
+    }
   }
 
   @Test
